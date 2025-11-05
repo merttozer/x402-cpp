@@ -1,0 +1,21 @@
+# Build and generated files
+/build/
+/sdkconfig
+/sdkconfig.old
+/sdkconfig.backup
+/sdkconfig.*
+/*.bin
+/*.elf
+
+# Dependencies
+/managed_components/
+dependencies.lock
+
+# IDE/editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
