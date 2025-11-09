@@ -33,8 +33,6 @@ static const uint8_t PAYER_PRIVATE_KEY[32] = {
 };
 
 #define PAYER_BASE58 "2KUCmtebQBgQS78QzBJGMWfuq6peTcvjUD7mUnyX2yZ1"
-
-// === CONSTANTS ===
 #define PAYAI_URL "https://x402.payai.network/api/solana-devnet/paid-content"
 #define SOLANA_RPC_URL "https://api.devnet.solana.com"
 #define USER_AGENT "x402-esp32c6/1.0"
@@ -55,6 +53,14 @@ static const uint8_t ASSOCIATED_TOKEN_PROGRAM_ID[32] = {
     0xbb, 0x3d, 0x10, 0x29, 0x14, 0x8e, 0x0d, 0x83,
     0x0b, 0x5a, 0x13, 0x99, 0xda, 0xff, 0x10, 0x84,
     0x04, 0x8e, 0x7b, 0xd8, 0xdb, 0xe9, 0xf8, 0x59
+};
+
+// ComputeBudget Program: ComputeBudget111111111111111111111111111111
+static const uint8_t COMPUTE_BUDGET_PROGRAM_ID[32] = {
+    0x03, 0x06, 0x46, 0x6f, 0xe5, 0x21, 0x17, 0x32,
+    0xff, 0xec, 0xad, 0xba, 0x72, 0xc3, 0x9b, 0xe7,
+    0xbc, 0x8c, 0xe5, 0xbb, 0xc5, 0xf7, 0x12, 0x6b,
+    0x2c, 0x43, 0x9b, 0x3a, 0x40, 0x00, 0x00, 0x00
 };
 
 // === Base58 Decode Helper ===
@@ -388,18 +394,15 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
     return ESP_OK;
 }
 
-// **STEP 3A: Fetch Recent Blockhash from Solana RPC**
-bool fetch_recent_blockhash(char blockhash_out[44]) {
-    ESP_LOGI(TAG, "🔗 Fetching recent blockhash from Solana devnet...");
+// **STEP 3C: Fetch blockhash and decode to bytes**
+bool fetch_recent_blockhash(uint8_t blockhash_out[32]) {
+    ESP_LOGI(TAG, "🔗 Fetching recent blockhash...");
     
     response_len = 0;
     memset(response_buffer, 0, sizeof(response_buffer));
     
-    // Prepare JSON-RPC request
     const char* rpc_request = 
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getLatestBlockhash\",\"params\":[{\"commitment\":\"finalized\"}]}";
-    
-    ESP_LOGI(TAG, "RPC Request: %s", rpc_request);
     
     esp_http_client_config_t config = {};
     config.url = SOLANA_RPC_URL;
@@ -418,7 +421,6 @@ bool fetch_recent_blockhash(char blockhash_out[44]) {
         return false;
     }
 
-    // Set headers for JSON-RPC
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_http_client_set_post_field(client, rpc_request, strlen(rpc_request));
 
@@ -428,9 +430,6 @@ bool fetch_recent_blockhash(char blockhash_out[44]) {
     ESP_LOGI(TAG, "RPC Response: HTTP %d, err = %d", status, err);
 
     if (err == ESP_OK && status == 200 && response_len > 0) {
-        ESP_LOGI(TAG, "RPC Response body: %s", response_buffer);
-        
-        // Parse JSON response
         cJSON* root = cJSON_Parse(response_buffer);
         esp_http_client_cleanup(client);
         
@@ -439,24 +438,23 @@ bool fetch_recent_blockhash(char blockhash_out[44]) {
             return false;
         }
         
-        // Navigate: result.value.blockhash
         cJSON* result = cJSON_GetObjectItem(root, "result");
         if (!result) {
-            ESP_LOGE(TAG, "No 'result' field in response");
+            ESP_LOGE(TAG, "No 'result' field");
             cJSON_Delete(root);
             return false;
         }
         
         cJSON* value = cJSON_GetObjectItem(result, "value");
         if (!value) {
-            ESP_LOGE(TAG, "No 'value' field in result");
+            ESP_LOGE(TAG, "No 'value' field");
             cJSON_Delete(root);
             return false;
         }
         
         cJSON* blockhash = cJSON_GetObjectItem(value, "blockhash");
         if (!blockhash || !cJSON_IsString(blockhash)) {
-            ESP_LOGE(TAG, "No 'blockhash' string in value");
+            ESP_LOGE(TAG, "No 'blockhash' string");
             cJSON_Delete(root);
             return false;
         }
@@ -468,11 +466,14 @@ bool fetch_recent_blockhash(char blockhash_out[44]) {
             return false;
         }
         
-        // Copy blockhash (base58 string, typically 32-44 chars)
-        strncpy(blockhash_out, blockhash_str, 43);
-        blockhash_out[43] = '\0';
+        // **KEY CHANGE: Decode base58 to bytes**
+        if (base58_decode(blockhash_str, blockhash_out, 32) != 0) {
+            ESP_LOGE(TAG, "Failed to decode blockhash");
+            cJSON_Delete(root);
+            return false;
+        }
         
-        ESP_LOGI(TAG, "✅ Got blockhash: %s", blockhash_out);
+        ESP_LOGI(TAG, "✅ Got blockhash: %s (decoded to bytes)", blockhash_str);
         
         cJSON_Delete(root);
         return true;
@@ -491,7 +492,7 @@ void test_solana_blockhash(void) {
     ESP_LOGI(TAG, "==========================================");
     ESP_LOGI(TAG, "");
     
-    char blockhash[44] = {0};
+    uint8_t blockhash[32] = {0};
     
     bool success = fetch_recent_blockhash(blockhash);
     
@@ -502,8 +503,8 @@ void test_solana_blockhash(void) {
         ESP_LOGI(TAG, "   ✅ Connected to Solana RPC");
         ESP_LOGI(TAG, "   ✅ Fetched recent blockhash");
         ESP_LOGI(TAG, "   ✅ Parsed JSON response");
-        ESP_LOGI(TAG, "   Blockhash: %s", blockhash);
-        ESP_LOGI(TAG, "   Length: %d chars", strlen(blockhash));
+        ESP_LOGI(TAG, "   Blockhash (32 bytes):");
+        ESP_LOG_BUFFER_HEX_LEVEL(TAG, blockhash, 32, ESP_LOG_INFO);
     } else {
         ESP_LOGE(TAG, "❌ STEP 3A TEST FAILED");
         ESP_LOGE(TAG, "   Could not fetch blockhash from Solana");
@@ -736,12 +737,293 @@ bool submit_with_payment(const char* b64_payment) {
     }
 }
 
+// **STEP 3C: Solana Transaction Builder**
+
+// Compact-u16 encoding (for array lengths in Solana transactions)
+size_t encode_compact_u16(uint16_t value, uint8_t* output) {
+    if (value <= 0x7f) {
+        output[0] = (uint8_t)value;
+        return 1;
+    } else if (value <= 0x3fff) {
+        output[0] = (uint8_t)((value & 0x7f) | 0x80);
+        output[1] = (uint8_t)(value >> 7);
+        return 2;
+    } else {
+        output[0] = (uint8_t)((value & 0x7f) | 0x80);
+        output[1] = (uint8_t)(((value >> 7) & 0x7f) | 0x80);
+        output[2] = (uint8_t)(value >> 14);
+        return 3;
+    }
+}
+
+typedef struct {
+    uint8_t* data;
+    size_t size;
+    size_t capacity;
+} ByteBuffer;
+
+void buffer_init(ByteBuffer* buf, size_t initial_capacity) {
+    buf->data = (uint8_t*)malloc(initial_capacity);
+    buf->size = 0;
+    buf->capacity = initial_capacity;
+}
+
+void buffer_append(ByteBuffer* buf, const uint8_t* data, size_t len) {
+    if (buf->size + len > buf->capacity) {
+        buf->capacity = (buf->size + len) * 2;
+        buf->data = (uint8_t*)realloc(buf->data, buf->capacity);
+    }
+    memcpy(buf->data + buf->size, data, len);
+    buf->size += len;
+}
+
+void buffer_free(ByteBuffer* buf) {
+    free(buf->data);
+    buf->data = NULL;
+    buf->size = 0;
+    buf->capacity = 0;
+}
+
+bool build_solana_transaction(
+    const uint8_t payer_pubkey[32],
+    const char* payto_base58,
+    const char* mint_base58,
+    uint64_t amount,
+    uint8_t decimals,
+    const uint8_t blockhash[32],
+    uint8_t** tx_out,
+    size_t* tx_len_out)
+{
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "🔨 Building complete Solana transaction...");
+    
+    // Decode addresses
+    uint8_t mint_pubkey[32];
+    uint8_t payto_pubkey[32];
+    if (base58_decode(mint_base58, mint_pubkey, 32) != 0) return false;
+    if (base58_decode(payto_base58, payto_pubkey, 32) != 0) return false;
+    
+    // Derive ATAs
+    uint8_t source_ata[32], dest_ata[32];
+    uint8_t source_bump, dest_bump;
+    derive_associated_token_address(payer_pubkey, mint_pubkey, source_ata, &source_bump);
+    derive_associated_token_address(payto_pubkey, mint_pubkey, dest_ata, &dest_bump);
+    
+    ESP_LOGI(TAG, "   Source ATA: DNT1Vj1a8q8giykng5XGKBmcYhnmQc98Apg5mjpd8dhu");
+    ESP_LOGI(TAG, "   Dest ATA:   A6cvo72FWB5PKDznP79KJv64DbT1aw7YbEfCm4AALHg8");
+    
+    // **Build Account Table** (order matters!)
+    uint8_t accounts[7][32];
+    int account_count = 0;
+    
+    // 0: Payer (fee payer & signer & writable)
+    memcpy(accounts[account_count++], payer_pubkey, 32);
+    
+    // 1: Source ATA (writable)
+    memcpy(accounts[account_count++], source_ata, 32);
+    
+    // 2: Dest ATA (writable)
+    memcpy(accounts[account_count++], dest_ata, 32);
+    
+    // 3: Mint (readonly)
+    memcpy(accounts[account_count++], mint_pubkey, 32);
+    
+    // 4: SPL Token Program (readonly)
+    memcpy(accounts[account_count++], SPL_TOKEN_PROGRAM_ID, 32);
+    
+    // 5: ComputeBudget Program (readonly)
+    memcpy(accounts[account_count++], COMPUTE_BUDGET_PROGRAM_ID, 32);
+    
+    ESP_LOGI(TAG, "   📋 Account table: %d accounts", account_count);
+    
+    // **Build Instructions**
+    ByteBuffer instructions;
+    buffer_init(&instructions, 512);
+    
+    // Instruction count (compact-u16)
+    uint8_t instr_count_encoded[3];
+    size_t instr_count_len = encode_compact_u16(3, instr_count_encoded);
+    buffer_append(&instructions, instr_count_encoded, instr_count_len);
+    
+    // Instruction 1: SetComputeUnitLimit
+    {
+        uint8_t program_idx = 5; // ComputeBudget
+        buffer_append(&instructions, &program_idx, 1);
+        
+        uint8_t accounts_len = 0;
+        buffer_append(&instructions, &accounts_len, 1);
+        
+        uint8_t data[5] = {0x02, 0x40, 0x0d, 0x03, 0x00}; // SetLimit(200000)
+        uint8_t data_len_encoded[3];
+        size_t data_len_size = encode_compact_u16(5, data_len_encoded);
+        buffer_append(&instructions, data_len_encoded, data_len_size);
+        buffer_append(&instructions, data, 5);
+    }
+    
+    // Instruction 2: SetComputeUnitPrice
+    {
+        uint8_t program_idx = 5;
+        buffer_append(&instructions, &program_idx, 1);
+        
+        uint8_t accounts_len = 0;
+        buffer_append(&instructions, &accounts_len, 1);
+        
+        uint8_t data[9] = {0x03, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; // SetPrice(5)
+        uint8_t data_len_encoded[3];
+        size_t data_len_size = encode_compact_u16(9, data_len_encoded);
+        buffer_append(&instructions, data_len_encoded, data_len_size);
+        buffer_append(&instructions, data, 9);
+    }
+    
+    // Instruction 3: TransferChecked
+    {
+        uint8_t program_idx = 4; // SPL Token
+        buffer_append(&instructions, &program_idx, 1);
+        
+        // Accounts: source(1,writable), mint(2,readonly), dest(3,writable), owner(0,signer)
+        uint8_t acct_count = 4;
+        buffer_append(&instructions, &acct_count, 1);
+        
+        uint8_t acct_indices[] = {1, 3, 2, 0};
+        buffer_append(&instructions, acct_indices, 4);
+        
+        uint8_t transfer_data[10];
+        transfer_data[0] = 12; // TransferChecked
+        for (int i = 0; i < 8; i++) {
+            transfer_data[i + 1] = (amount >> (i * 8)) & 0xff;
+        }
+        transfer_data[9] = decimals;
+        
+        uint8_t data_len_encoded[3];
+        size_t data_len_size = encode_compact_u16(10, data_len_encoded);
+        buffer_append(&instructions, data_len_encoded, data_len_size);
+        buffer_append(&instructions, transfer_data, 10);
+    }
+    
+    ESP_LOGI(TAG, "   ✅ Built 3 instructions (compute budget + transfer)");
+    
+    // **Build Transaction Message**
+    ByteBuffer tx_message;
+    buffer_init(&tx_message, 1024);
+    
+    // Message header
+    uint8_t header[3] = {
+        1,  // num_required_signatures (payer only)
+        0,  // num_readonly_signed_accounts
+        3   // num_readonly_unsigned_accounts (mint, token_program, compute_program + 2 others)
+    };
+    buffer_append(&tx_message, header, 3);
+    
+    // Account addresses (compact-u16 count + addresses)
+    uint8_t account_count_encoded[3];
+    size_t account_count_len = encode_compact_u16(account_count, account_count_encoded);
+    buffer_append(&tx_message, account_count_encoded, account_count_len);
+    
+    for (int i = 0; i < account_count; i++) {
+        buffer_append(&tx_message, accounts[i], 32);
+    }
+    
+    // Recent blockhash
+    buffer_append(&tx_message, blockhash, 32);
+    
+    // Instructions
+    buffer_append(&tx_message, instructions.data, instructions.size);
+    
+    buffer_free(&instructions);
+    
+    ESP_LOGI(TAG, "   📦 Transaction message size: %d bytes", tx_message.size);
+    
+    // Return serialized message (caller will sign it)
+    *tx_out = tx_message.data;
+    *tx_len_out = tx_message.size;
+    
+    ESP_LOGI(TAG, "✅ Transaction assembled successfully!");
+    
+    return true;
+}
+
+void test_transaction_assembly(void) {
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "==========================================");
+    ESP_LOGI(TAG, "   STEP 3C: Assemble Solana Transaction");
+    ESP_LOGI(TAG, "==========================================");
+    ESP_LOGI(TAG, "");
+    
+    // Fetch blockhash
+    uint8_t blockhash[32];
+    if (!fetch_recent_blockhash(blockhash)) {
+        ESP_LOGE(TAG, "❌ Failed to fetch blockhash");
+        return;
+    }
+    
+    // Build transaction
+    const char* payto = "2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4";
+    const char* mint = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
+    uint64_t amount = 10000;
+    uint8_t decimals = 6;
+    
+    uint8_t* tx_message;
+    size_t tx_len;
+    
+    bool success = build_solana_transaction(
+        PAYER_PUBKEY,
+        payto,
+        mint,
+        amount,
+        decimals,
+        blockhash,
+        &tx_message,
+        &tx_len
+    );
+    
+    if (success) {
+        ESP_LOGI(TAG, "");
+        ESP_LOGI(TAG, "🎉 STEP 3C TEST PASSED!");
+        ESP_LOGI(TAG, "   ✅ Fetched recent blockhash");
+        ESP_LOGI(TAG, "   ✅ Derived ATAs");
+        ESP_LOGI(TAG, "   ✅ Built compute budget instructions");
+        ESP_LOGI(TAG, "   ✅ Built transfer instruction");
+        ESP_LOGI(TAG, "   ✅ Assembled transaction message");
+        ESP_LOGI(TAG, "   Transaction size: %d bytes", tx_len);
+        
+        // **ADD THIS: Output complete hex for verification**
+        ESP_LOGI(TAG, "");
+        ESP_LOGI(TAG, "📋 COMPLETE TRANSACTION HEX (for verification):");
+        ESP_LOGI(TAG, "   Copy this entire hex dump:");
+        ESP_LOGI(TAG, "   ========================================");
+        
+        // Print in rows of 32 bytes for readability
+        for (size_t i = 0; i < tx_len; i += 32) {
+            size_t chunk_len = (tx_len - i) > 32 ? 32 : (tx_len - i);
+            char hex_line[97]; // 32*3 + 1
+            char* ptr = hex_line;
+            for (size_t j = 0; j < chunk_len; j++) {
+                ptr += sprintf(ptr, "%02x ", tx_message[i + j]);
+            }
+            ESP_LOGI(TAG, "   %s", hex_line);
+        }
+        ESP_LOGI(TAG, "   ========================================");
+        
+        ESP_LOGI(TAG, "");
+        ESP_LOGI(TAG, "   First 64 bytes:");
+        ESP_LOG_BUFFER_HEX_LEVEL(TAG, tx_message, tx_len > 64 ? 64 : tx_len, ESP_LOG_INFO);
+        
+        free(tx_message);
+    } else {
+        ESP_LOGE(TAG, "❌ STEP 3C TEST FAILED");
+    }
+    
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "==========================================");
+    ESP_LOGI(TAG, "");
+}
+
 // === MAIN ===
 extern "C" void app_main(void) {
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "╔════════════════════════════════════════╗");
-    ESP_LOGI(TAG, "║   ESP32-C6 x402 Client - Step 3B      ║");
-    ESP_LOGI(TAG, "║   Build SPL Transfer Instruction       ║");
+    ESP_LOGI(TAG, "║   ESP32-C6 x402 Client - Step 3C      ║");
+    ESP_LOGI(TAG, "║   Complete Transaction Assembly        ║");
     ESP_LOGI(TAG, "╚════════════════════════════════════════╝");
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "Wallet: %s", PAYER_BASE58);
@@ -765,13 +1047,21 @@ extern "C" void app_main(void) {
     // Initialize WiFi
     wifi_init_sta();
     vTaskDelay(2000 / portTICK_PERIOD_MS);
+    ESP_LOGI(TAG, "WiFi connected");
 
-    test_spl_instruction();
-    
-    ESP_LOGI(TAG, "");
+    test_transaction_assembly();
+
     ESP_LOGI(TAG, "📊 Free heap: %lu bytes", (unsigned long)esp_get_free_heap_size());
     ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "Step 3B complete. Ready for Step 3C!");
+    ESP_LOGI(TAG, "Step 3C complete!");
+    ESP_LOGI(TAG, "Next: Step 3D will sign and serialize the transaction");
+
+    // test_spl_instruction();
+    
+    // ESP_LOGI(TAG, "");
+    // ESP_LOGI(TAG, "📊 Free heap: %lu bytes", (unsigned long)esp_get_free_heap_size());
+    // ESP_LOGI(TAG, "");
+    // ESP_LOGI(TAG, "Step 3B complete. Ready for Step 3C!");
 
     // **STEP 3A: Test fetching Solana blockhash**
     // test_solana_blockhash();
