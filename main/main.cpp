@@ -11,7 +11,9 @@
 #include <esp_netif.h>
 #include <esp_crt_bundle.h>
 #include <cJSON.h>
+#include <inttypes.h>
 #include "base64.h"
+#include "base58.h"
 
 // **STEP 2: Add libsodium for real ed25519**
 #include "sodium.h"
@@ -19,6 +21,15 @@
 // === CONFIGURATION ===
 #define WIFI_SSID      "mert.ozer"//"Ziggo0797231"
 #define WIFI_PASSWORD  "mert1225"//"hgseAucf2Weed2ep"
+
+#define PAYER_BASE58 "2KUCmtebQBgQS78QzBJGMWfuq6peTcvjUD7mUnyX2yZ1"
+#define PAYAI_URL "https://x402.payai.network/api/solana-devnet/paid-content"
+#define SOLANA_RPC_URL "https://api.devnet.solana.com"
+#define USER_AGENT "x402-esp32c6/1.0"
+#define TAG "x402"
+
+#define TOKEN_MINT   "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"  // USDC devnet
+#define TOKEN_DECIMALS 6
 
 // Your actual Solana wallet public key (32 bytes)
 static const uint8_t PAYER_PUBKEY[32] = {
@@ -32,13 +43,6 @@ static const uint8_t PAYER_PRIVATE_KEY[32] = {
     150, 41, 194, 128, 66, 100, 125, 114, 60, 164, 25, 245, 150, 187, 159, 32
 };
 
-#define PAYER_BASE58 "2KUCmtebQBgQS78QzBJGMWfuq6peTcvjUD7mUnyX2yZ1"
-#define PAYAI_URL "https://x402.payai.network/api/solana-devnet/paid-content"
-#define SOLANA_RPC_URL "https://api.devnet.solana.com"
-#define USER_AGENT "x402-esp32c6/1.0"
-#define TAG "x402"
-
-// **STEP 3B: Solana SPL Token Program Constants**
 // Token Program ID: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
 static const uint8_t SPL_TOKEN_PROGRAM_ID[32] = {
     0x06, 0xdd, 0xf6, 0xe1, 0xd7, 0x65, 0xa1, 0x93,
@@ -64,30 +68,35 @@ static const uint8_t COMPUTE_BUDGET_PROGRAM_ID[32] = {
 };
 
 // === Base58 Decode Helper ===
-static const char BASE58_ALPHABET[] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-
-int base58_decode(const char* input, uint8_t* output, size_t output_len) {
-    size_t input_len = strlen(input);
-    memset(output, 0, output_len);
-    
-    for (size_t i = 0; i < input_len; i++) {
-        const char* p = strchr(BASE58_ALPHABET, input[i]);
-        if (!p) return -1;
-        
-        int digit = p - BASE58_ALPHABET;
-        int carry = digit;
-        
-        for (int j = output_len - 1; j >= 0; j--) {
-            carry += output[j] * 58;
-            output[j] = carry & 0xff;
-            carry >>= 8;
-        }
+// Helper wrapper for Solana (32-byte raw pubkey from Base58 string)
+bool solana_base58_to_bytes(const char* base58_str, uint8_t* out32) {
+    if (!base58_str) {
+        ESP_LOGE(TAG, "Input base58_str is NULL!");
+        return false;
     }
+    size_t len = strlen(base58_str);
+    if (len == 0) {
+        ESP_LOGE(TAG, "Input base58_str is empty!");
+        return false;
+    }
+    ESP_LOGI(TAG, "Decoding Base58 string of length %d: '%s'", len, base58_str);
+
+    size_t expected_len = 32;
+    bool success = b58tobin(out32, &expected_len, base58_str, len);
     
-    return 0;
+    if (!success) {
+        ESP_LOGE(TAG, "b58tobin returned FALSE for input: %s", base58_str);
+        return false;
+    }
+    if (expected_len != 32) {
+        ESP_LOGE(TAG, "Decoded Base58 is not 32 bytes (got %d) for: %s", expected_len, base58_str);
+        return false;
+    }
+    ESP_LOGI(TAG, "✅ Successfully decoded to 32 bytes");
+    return true;
 }
 
-// **CORRECT: Solana PDA derivation with bump seed**
+// Solana PDA derivation with bump seed**
 // For ATA, bump=255 always works, so we can simplify
 bool find_program_address(
     const uint8_t* seeds[],
@@ -173,116 +182,6 @@ bool derive_associated_token_address(
     }
     
     return success;
-}
-
-typedef struct {
-    uint8_t instruction_data[10];
-    size_t instruction_data_len;
-    uint8_t source_ata[32];
-    uint8_t mint[32];
-    uint8_t dest_ata[32];
-    uint8_t owner[32];
-    uint8_t program_id[32];
-} SPLTransferInstruction;
-
-bool build_spl_transfer_instruction(
-    SPLTransferInstruction* instr,
-    const uint8_t payer_pubkey[32],
-    const char* payto_base58,
-    const char* mint_base58,
-    uint64_t amount,
-    uint8_t decimals)
-{
-    ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "🔨 Building SPL TransferChecked instruction...");
-    ESP_LOGI(TAG, "   Amount: %llu", amount);
-    ESP_LOGI(TAG, "   Decimals: %u", decimals);
-    
-    uint8_t mint_pubkey[32];
-    if (base58_decode(mint_base58, mint_pubkey, 32) != 0) {
-        ESP_LOGE(TAG, "Failed to decode mint");
-        return false;
-    }
-    memcpy(instr->mint, mint_pubkey, 32);
-    
-    uint8_t payto_pubkey[32];
-    if (base58_decode(payto_base58, payto_pubkey, 32) != 0) {
-        ESP_LOGE(TAG, "Failed to decode payTo");
-        return false;
-    }
-    
-    // Derive source ATA
-    uint8_t source_bump;
-    if (!derive_associated_token_address(payer_pubkey, mint_pubkey, instr->source_ata, &source_bump)) {
-        return false;
-    }
-    ESP_LOGI(TAG, "   Source ATA (your USDC account):");
-    ESP_LOG_BUFFER_HEX_LEVEL(TAG, instr->source_ata, 32, ESP_LOG_INFO);
-    
-    // Derive dest ATA
-    uint8_t dest_bump;
-    if (!derive_associated_token_address(payto_pubkey, mint_pubkey, instr->dest_ata, &dest_bump)) {
-        return false;
-    }
-    ESP_LOGI(TAG, "   Dest ATA (PayAI's USDC account):");
-    ESP_LOG_BUFFER_HEX_LEVEL(TAG, instr->dest_ata, 32, ESP_LOG_INFO);
-    
-    memcpy(instr->owner, payer_pubkey, 32);
-    memcpy(instr->program_id, SPL_TOKEN_PROGRAM_ID, 32);
-    
-    // Instruction data: [12][amount:le64][decimals:u8]
-    instr->instruction_data[0] = 12;
-    for (int i = 0; i < 8; i++) {
-        instr->instruction_data[i + 1] = (amount >> (i * 8)) & 0xff;
-    }
-    instr->instruction_data[9] = decimals;
-    instr->instruction_data_len = 10;
-    
-    ESP_LOGI(TAG, "   Instruction data:");
-    ESP_LOG_BUFFER_HEX_LEVEL(TAG, instr->instruction_data, 10, ESP_LOG_INFO);
-    ESP_LOGI(TAG, "✅ SPL instruction built with proper PDA-derived ATAs!");
-    
-    return true;
-}
-
-void test_spl_instruction(void) {
-    ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "==========================================");
-    ESP_LOGI(TAG, "   STEP 3B: SPL Transfer with Real PDAs");
-    ESP_LOGI(TAG, "==========================================");
-    
-    const char* payto = "2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4";
-    const char* mint = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
-    uint64_t amount = 10000;
-    uint8_t decimals = 6;
-    
-    SPLTransferInstruction instr;
-    
-    bool success = build_spl_transfer_instruction(
-        &instr,
-        PAYER_PUBKEY,
-        payto,
-        mint,
-        amount,
-        decimals
-    );
-    
-    ESP_LOGI(TAG, "");
-    
-    if (success) {
-        ESP_LOGI(TAG, "🎉 STEP 3B TEST PASSED!");
-        ESP_LOGI(TAG, "   ✅ Used proper Solana PDA derivation");
-        ESP_LOGI(TAG, "   ✅ Found valid bump seeds");
-        ESP_LOGI(TAG, "   ✅ Derived correct ATAs");
-        ESP_LOGI(TAG, "   ✅ Built TransferChecked instruction");
-        ESP_LOGI(TAG, "   ✅ Ready for transaction assembly!");
-    } else {
-        ESP_LOGE(TAG, "❌ STEP 3B TEST FAILED");
-    }
-    
-    ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "==========================================");
-    ESP_LOGI(TAG, "");
 }
 
 // === WiFi Event Handling ===
@@ -467,8 +366,8 @@ bool fetch_recent_blockhash(uint8_t blockhash_out[32]) {
         }
         
         // **KEY CHANGE: Decode base58 to bytes**
-        if (base58_decode(blockhash_str, blockhash_out, 32) != 0) {
-            ESP_LOGE(TAG, "Failed to decode blockhash");
+        if (!solana_base58_to_bytes(blockhash_str, blockhash_out)) {
+            ESP_LOGE(TAG, "Failed to decode blockhash: %s", blockhash_str);
             cJSON_Delete(root);
             return false;
         }
@@ -482,37 +381,6 @@ bool fetch_recent_blockhash(uint8_t blockhash_out[32]) {
     esp_http_client_cleanup(client);
     ESP_LOGE(TAG, "Failed to fetch blockhash from Solana RPC");
     return false;
-}
-
-// **STEP 3A: Test blockhash fetching**
-void test_solana_blockhash(void) {
-    ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "==========================================");
-    ESP_LOGI(TAG, "   STEP 3A: Fetch Solana Blockhash");
-    ESP_LOGI(TAG, "==========================================");
-    ESP_LOGI(TAG, "");
-    
-    uint8_t blockhash[32] = {0};
-    
-    bool success = fetch_recent_blockhash(blockhash);
-    
-    ESP_LOGI(TAG, "");
-    
-    if (success) {
-        ESP_LOGI(TAG, "🎉 STEP 3A TEST PASSED!");
-        ESP_LOGI(TAG, "   ✅ Connected to Solana RPC");
-        ESP_LOGI(TAG, "   ✅ Fetched recent blockhash");
-        ESP_LOGI(TAG, "   ✅ Parsed JSON response");
-        ESP_LOGI(TAG, "   Blockhash (32 bytes):");
-        ESP_LOG_BUFFER_HEX_LEVEL(TAG, blockhash, 32, ESP_LOG_INFO);
-    } else {
-        ESP_LOGE(TAG, "❌ STEP 3A TEST FAILED");
-        ESP_LOGE(TAG, "   Could not fetch blockhash from Solana");
-    }
-    
-    ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "==========================================");
-    ESP_LOGI(TAG, "");
 }
 
 // **STEP 2: Real ED25519 Signing with libsodium**
@@ -545,89 +413,6 @@ bool ed25519_sign_message(uint8_t signature[64], const uint8_t* message, size_t 
     ESP_LOG_BUFFER_HEX_LEVEL(TAG, signature, 64, ESP_LOG_INFO);
     
     return true;
-}
-
-// **STEP 2: Verify ED25519 signature**
-bool ed25519_verify_signature(const uint8_t signature[64], const uint8_t* message, 
-                              size_t message_len, const uint8_t public_key[32])
-{
-    ESP_LOGI(TAG, "🔍 Skipping signature verification (requires too much stack)");
-    ESP_LOGI(TAG, "   Signature can be verified on PC/server if needed");
-    return true; // Assume valid
-    /*ESP_LOGI(TAG, "🔍 Verifying signature with ed25519...");
-    
-    int result = crypto_sign_verify_detached(
-        signature,      // Input: 64-byte signature
-        message,        // Input: message
-        message_len,    // Input: message length
-        public_key      // Input: 32-byte public key
-    );
-    
-    if (result == 0) {
-        ESP_LOGI(TAG, "✅ Signature verification PASSED!");
-        return true;
-    } else {
-        ESP_LOGE(TAG, "❌ Signature verification FAILED!");
-        return false;
-    }*/
-}
-
-// **STEP 2: Test real ED25519 signing and verification**
-void test_ed25519_signing(void) {
-    ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "==========================================");
-    ESP_LOGI(TAG, "   STEP 2: Testing REAL ED25519 Signing");
-    ESP_LOGI(TAG, "==========================================");
-    ESP_LOGI(TAG, "");
-    
-    // Test 1: Sign a message
-    const char* test_msg = "Hello Solana from ESP32-C6!";
-    uint8_t signature[64];
-    
-    ESP_LOGI(TAG, "Wallet Public Key:");
-    ESP_LOG_BUFFER_HEX_LEVEL(TAG, PAYER_PUBKEY, 32, ESP_LOG_INFO);
-    
-    ESP_LOGI(TAG, "Test Message: \"%s\"", test_msg);
-    ESP_LOGI(TAG, "");
-    
-    // Sign the message
-    bool sign_success = ed25519_sign_message(
-        signature, 
-        (const uint8_t*)test_msg, 
-        strlen(test_msg),
-        PAYER_PRIVATE_KEY,
-        PAYER_PUBKEY
-    );
-    
-    if (!sign_success) {
-        ESP_LOGE(TAG, "❌ STEP 2 FAILED: Could not sign message");
-        return;
-    }
-    
-    ESP_LOGI(TAG, "");
-    
-    // Verify the signature
-    bool verify_success = ed25519_verify_signature(
-        signature,
-        (const uint8_t*)test_msg,
-        strlen(test_msg),
-        PAYER_PUBKEY
-    );
-    
-    ESP_LOGI(TAG, "");
-    
-    if (sign_success && verify_success) {
-        ESP_LOGI(TAG, "🎉 STEP 2 TEST PASSED!");
-        ESP_LOGI(TAG, "   ✅ Real ed25519 signature generated");
-        ESP_LOGI(TAG, "   ✅ Signature verified successfully");
-        ESP_LOGI(TAG, "   ✅ Ready for Solana transaction signing!");
-    } else {
-        ESP_LOGE(TAG, "❌ STEP 2 TEST FAILED");
-    }
-    
-    ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "==========================================");
-    ESP_LOGI(TAG, "");
 }
 
 bool fetch_payment_requirements(cJSON** out_req) {
@@ -787,6 +572,7 @@ void buffer_free(ByteBuffer* buf) {
 bool build_solana_transaction(
     const uint8_t payer_pubkey[32],
     const char* payto_base58,
+    const char* fee_payer_base58,
     const char* mint_base58,
     uint64_t amount,
     uint8_t decimals,
@@ -800,22 +586,55 @@ bool build_solana_transaction(
     // Decode addresses
     uint8_t mint_pubkey[32];
     uint8_t payto_pubkey[32];
-    if (base58_decode(mint_base58, mint_pubkey, 32) != 0) return false;
-    if (base58_decode(payto_base58, payto_pubkey, 32) != 0) return false;
-    
+    uint8_t fee_payer_pubkey[32];
+    if (!solana_base58_to_bytes(mint_base58, mint_pubkey)) {
+        ESP_LOGE(TAG, "Failed to decode mint_base58: %s", mint_base58);
+        return false;
+    }
+    if (!solana_base58_to_bytes(payto_base58, payto_pubkey)) {
+        ESP_LOGE(TAG, "Failed to decode payto_base58: %s", payto_base58);
+        return false;
+    }
+    if (!solana_base58_to_bytes(fee_payer_base58, fee_payer_pubkey)) {
+        ESP_LOGE(TAG, "Failed to decode fee_payer_base58: %s", fee_payer_base58);
+        return false;
+    }
+        
     // Derive ATAs
-    uint8_t source_ata[32], dest_ata[32];
-    uint8_t source_bump, dest_bump;
-    derive_associated_token_address(payer_pubkey, mint_pubkey, source_ata, &source_bump);
-    derive_associated_token_address(payto_pubkey, mint_pubkey, dest_ata, &dest_bump);
+    // uint8_t source_ata[32], dest_ata[32];
+    // uint8_t source_bump, dest_bump;
+    // derive_associated_token_address(payer_pubkey, mint_pubkey, source_ata, &source_bump);
+    // derive_associated_token_address(payto_pubkey, mint_pubkey, dest_ata, &dest_bump);
     
+    // HARDCODED ATAs FOR TESTING
+    uint8_t source_ata[32], dest_ata[32];
+    // Your USDC account
+    const char* SOURCE_ATA = "DNT1Vj1a8q8giykng5XGKBmcYhnmQc98Apg5mjpd8dhu";
+    if (!solana_base58_to_bytes(SOURCE_ATA, source_ata)) {
+        ESP_LOGE(TAG, "Failed to decode SOURCE_ATA");
+        return false;
+    }
+    // PayAI's CORRECT ATA for H32Y... wallet
+    const char* DEST_ATA = "2g7LTDwkHaeU3PcTqkiXzzWNpCt6VxpuPHLH3PX1m11d";
+    if (!solana_base58_to_bytes(DEST_ATA, dest_ata)) {
+        ESP_LOGE(TAG, "Failed to decode DEST_ATA");
+        return false;
+    }
+
+    ESP_LOGI(TAG, "   ✅ HARDCODED ATAs (testing):");
+    ESP_LOGI(TAG, "   Source: %s", SOURCE_ATA);
+    ESP_LOGI(TAG, "   Dest:   %s", DEST_ATA);
+
     ESP_LOGI(TAG, "   Source ATA: DNT1Vj1a8q8giykng5XGKBmcYhnmQc98Apg5mjpd8dhu");
-    ESP_LOGI(TAG, "   Dest ATA:   A6cvo72FWB5PKDznP79KJv64DbT1aw7YbEfCm4AALHg8");
+    ESP_LOGI(TAG, "   Dest ATA:   2g7LTDwkHaeU3PcTqkiXzzWNpCt6VxpuPHLH3PX1m11d");
     
     // **Build Account Table** (order matters!)
     uint8_t accounts[7][32];
     int account_count = 0;
-    
+
+    // 0: Fee Payer (from 402 response, signer, writable)
+    memcpy(accounts[account_count++], fee_payer_pubkey, 32);
+
     // 0: Payer (fee payer & signer & writable)
     memcpy(accounts[account_count++], payer_pubkey, 32);
     
@@ -830,7 +649,7 @@ bool build_solana_transaction(
     
     // 4: SPL Token Program (readonly)
     memcpy(accounts[account_count++], SPL_TOKEN_PROGRAM_ID, 32);
-    
+
     // 5: ComputeBudget Program (readonly)
     memcpy(accounts[account_count++], COMPUTE_BUDGET_PROGRAM_ID, 32);
     
@@ -847,13 +666,13 @@ bool build_solana_transaction(
     
     // Instruction 1: SetComputeUnitLimit
     {
-        uint8_t program_idx = 5; // ComputeBudget
+        uint8_t program_idx = 6; // ComputeBudget
         buffer_append(&instructions, &program_idx, 1);
         
         uint8_t accounts_len = 0;
         buffer_append(&instructions, &accounts_len, 1);
         
-        uint8_t data[5] = {0x02, 0x40, 0x0d, 0x03, 0x00}; // SetLimit(200000)
+        uint8_t data[5] = {0x02, 0x40, 0x9c, 0x00, 0x00};
         uint8_t data_len_encoded[3];
         size_t data_len_size = encode_compact_u16(5, data_len_encoded);
         buffer_append(&instructions, data_len_encoded, data_len_size);
@@ -862,13 +681,13 @@ bool build_solana_transaction(
     
     // Instruction 2: SetComputeUnitPrice
     {
-        uint8_t program_idx = 5;
+        uint8_t program_idx = 6;
         buffer_append(&instructions, &program_idx, 1);
         
         uint8_t accounts_len = 0;
         buffer_append(&instructions, &accounts_len, 1);
         
-        uint8_t data[9] = {0x03, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; // SetPrice(5)
+        uint8_t data[9] = {0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
         uint8_t data_len_encoded[3];
         size_t data_len_size = encode_compact_u16(9, data_len_encoded);
         buffer_append(&instructions, data_len_encoded, data_len_size);
@@ -877,14 +696,14 @@ bool build_solana_transaction(
     
     // Instruction 3: TransferChecked
     {
-        uint8_t program_idx = 4; // SPL Token
+        uint8_t program_idx = 5; // SPL Token
         buffer_append(&instructions, &program_idx, 1);
         
         // Accounts: source(1,writable), mint(2,readonly), dest(3,writable), owner(0,signer)
         uint8_t acct_count = 4;
         buffer_append(&instructions, &acct_count, 1);
         
-        uint8_t acct_indices[] = {1, 3, 2, 0};
+        uint8_t acct_indices[] = {2, 4, 3, 1};
         buffer_append(&instructions, acct_indices, 4);
         
         uint8_t transfer_data[10];
@@ -908,7 +727,7 @@ bool build_solana_transaction(
     
     // Message header
     uint8_t header[3] = {
-        1,  // num_required_signatures (payer only)
+        2,  // num_required_signatures (payer only)
         0,  // num_readonly_signed_accounts
         3   // num_readonly_unsigned_accounts (mint, token_program, compute_program + 2 others)
     };
@@ -942,199 +761,379 @@ bool build_solana_transaction(
     return true;
 }
 
-void test_transaction_assembly(void) {
+// **STEP 3D: Build Complete Signed Transaction**
+bool build_signed_transaction(
+    const uint8_t* tx_message,
+    size_t tx_message_len,
+    const uint8_t signature[64],
+    char** base64_out)
+{
     ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "==========================================");
-    ESP_LOGI(TAG, "   STEP 3C: Assemble Solana Transaction");
-    ESP_LOGI(TAG, "==========================================");
-    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "🔐 Building complete PARTIALLY-SIGNED transaction...");    
+
+    // Complete transaction format:
+    // [num_signatures:compact-u16][signatures...][message]
     
-    // Fetch blockhash
+    // 1 byte sig count + 64 byte (null) sig + 64 byte (client) sig + message
+    size_t total_len = 1 + 64 + 64 + tx_message_len; 
+    uint8_t* complete_tx = (uint8_t*)malloc(total_len);
+    if (!complete_tx) return false;
+    
+    size_t offset = 0;
+    
+    // Number of signatures (compact-u16, will be 2)
+    complete_tx[offset++] = 0x02; // <-- WAS 0x01
+    
+    // Signature 1: Facilitator (placeholder)
+    memset(complete_tx + offset, 0, 64); // <-- Add 64 bytes of 0x00
+    offset += 64;
+    
+    // Signature 2: Client (your signature)
+    memcpy(complete_tx + offset, signature, 64);
+    offset += 64;
+    
+    // Message
+    memcpy(complete_tx + offset, tx_message, tx_message_len);
+    offset += tx_message_len;
+    
+    ESP_LOGI(TAG, "   Complete transaction size: %d bytes", total_len);
+    ESP_LOGI(TAG, "   Breakdown: 1 (sig count) + 64 (null sig) + 64 (client sig) + %d (message)", tx_message_len);
+
+    // Base64 encode using our implementation
+    *base64_out = base64_encode(complete_tx, total_len);
+    if (!*base64_out) {
+        free(complete_tx);
+        return false;
+    }
+    
+    ESP_LOGI(TAG, "   Base64 encoded length: %d bytes", strlen(*base64_out));
+    ESP_LOGI(TAG, "✅ Partially-signed transaction ready!");
+
+    free(complete_tx);
+    return true;
+}
+
+// ADD THIS NEW FUNCTION
+char* build_x_payment_payload(const char* base64_transaction) {
+    ESP_LOGI(TAG, "🎁 Wrapping transaction in x402 JSON payload...");
+    
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddNumberToObject(root, "x402Version", 1);
+    cJSON_AddStringToObject(root, "scheme", "exact");
+    cJSON_AddStringToObject(root, "network", "solana-devnet");
+    
+    cJSON* payload = cJSON_CreateObject();
+    cJSON_AddStringToObject(payload, "transaction", base64_transaction);
+    cJSON_AddItemToObject(root, "payload", payload);
+    
+    char* json_str = cJSON_PrintUnformatted(root);
+    if (!json_str) {
+        ESP_LOGE(TAG, "❌ Failed to print x402 JSON");
+        cJSON_Delete(root);
+        return NULL;
+    }
+    
+    // Base64 encode the entire JSON string
+    char* final_header = base64_encode((const unsigned char*)json_str, strlen(json_str));
+    
+    ESP_LOGI(TAG, "   JSON: %s", json_str);
+    ESP_LOGI(TAG, "   ✅ Final X-PAYMENT payload ready (%d bytes base64)", strlen(final_header));
+
+    free(json_str);
+    cJSON_Delete(root);
+    
+    return final_header;
+}
+// ============================================================================
+// X402 PAYMENT REQUEST
+// ============================================================================
+
+bool make_x402_payment_request(const char* url, const char* base64_tx, char** content_out) {
+    response_len = 0;
+    memset(response_buffer, 0, sizeof(response_buffer));
+    
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "💳 Making x402 payment request...");
+    ESP_LOGI(TAG, "   URL: %s", url);
+    
+    esp_http_client_config_t config = {};
+    config.url = url;
+    config.method = HTTP_METHOD_GET;
+    config.timeout_ms = 30000;
+    config.event_handler = _http_event_handler;
+    config.crt_bundle_attach = esp_crt_bundle_attach;
+    config.buffer_size_tx = 1024;
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) {
+        ESP_LOGE(TAG, "❌ Failed to init HTTP client");
+        return false;
+    }
+
+    // Set X-PAYMENT header
+    char header_value[1024];
+    snprintf(header_value, sizeof(header_value), "%s", base64_tx);
+    esp_http_client_set_header(client, "X-PAYMENT", header_value);
+    
+    ESP_LOGI(TAG, "   X-PAYMENT header set (%d chars)", strlen(base64_tx));
+
+    esp_err_t err = esp_http_client_perform(client);
+    int status = esp_http_client_get_status_code(client);
+    
+    ESP_LOGI(TAG, "   Response: HTTP %d, err = %d", status, err);
+
+    if (err == ESP_OK) {
+        if (status == 200) {
+            ESP_LOGI(TAG, "🎉 Payment accepted!");
+            
+            // Get X-PAYMENT-RESPONSE header if present
+            char* payment_response = NULL;
+            int len = esp_http_client_get_header(client, "X-PAYMENT-RESPONSE", &payment_response);
+            if (len > 0 && payment_response) {
+                ESP_LOGI(TAG, "   X-PAYMENT-RESPONSE: %s", payment_response);
+            }
+            
+            if (response_len > 0) {
+                *content_out = (char*)malloc(response_len + 1);
+                if (*content_out) {
+                    memcpy(*content_out, response_buffer, response_len);
+                    (*content_out)[response_len] = '\0';
+                }
+            }
+            
+            esp_http_client_cleanup(client);
+            return true;
+            
+        } else if (status == 402) {
+            ESP_LOGW(TAG, "⚠️  Payment Required (402)");
+            ESP_LOGI(TAG, "   Server requires payment but rejected our transaction");
+            if (response_len > 0) {
+                ESP_LOGI(TAG, "   Response: %s", response_buffer);
+            }
+        } else {
+            ESP_LOGW(TAG, "⚠️  Unexpected status: %d", status);
+            if (response_len > 0) {
+                ESP_LOGI(TAG, "   Response: %s", response_buffer);
+            }
+        }
+    } else {
+        ESP_LOGE(TAG, "❌ HTTP request failed: %s", esp_err_to_name(err));
+    }
+    
+    esp_http_client_cleanup(client);
+    return false;
+}
+
+// ============================================================================
+// MAIN APPLICATION
+// ============================================================================
+
+void run_x402_client(void) {
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "╔════════════════════════════════════════════════════════╗");
+    ESP_LOGI(TAG, "║         ESP32 x402 Payment Client - FULL RUN          ║");
+    ESP_LOGI(TAG, "╚════════════════════════════════════════════════════════╝");
+    ESP_LOGI(TAG, "");
+
+    // === PHASE 1: Fetch payment requirements ===
+    ESP_LOGI(TAG, "📡 Phase 1: Fetching payment requirements from PayAI...");
+    cJSON* req = NULL;
+    if (!fetch_payment_requirements(&req)) {
+        ESP_LOGE(TAG, "❌ Failed to fetch payment requirements");
+        return;
+    }
+
+    // Parse the first accept offer
+    cJSON* accepts = cJSON_GetObjectItem(req, "accepts");
+    if (!accepts || !cJSON_IsArray(accepts) || cJSON_GetArraySize(accepts) == 0) {
+        ESP_LOGE(TAG, "❌ No 'accepts' array in 402 response");
+        cJSON_Delete(req);
+        return;
+    }
+
+    cJSON* offer = cJSON_GetArrayItem(accepts, 0);
+    const char* dynamic_payto = cJSON_GetStringValue(cJSON_GetObjectItem(offer, "payTo"));
+    const char* asset = cJSON_GetStringValue(cJSON_GetObjectItem(offer, "asset"));
+    const char* amount_str = cJSON_GetStringValue(cJSON_GetObjectItem(offer, "maxAmountRequired"));
+    const char* resource_raw = cJSON_GetStringValue(cJSON_GetObjectItem(offer, "resource"));
+
+    if (!dynamic_payto || !asset || !amount_str || !resource_raw) {
+        ESP_LOGE(TAG, "❌ Missing required fields in payment offer");
+        cJSON_Delete(req);
+        return;
+    }
+
+    cJSON* extra = cJSON_GetObjectItem(offer, "extra");
+    const char* fee_payer_base58 = cJSON_GetStringValue(cJSON_GetObjectItem(extra, "feePayer"));
+
+    if (!fee_payer_base58) {
+        ESP_LOGE(TAG, "❌ Missing 'extra.feePayer' in payment offer");
+        cJSON_Delete(req);
+        return;
+    }
+
+    ESP_LOGI(TAG, "   Fee Payer: %s", fee_payer_base58);
+
+    // Trim whitespace from resource (PayAI sometimes appends spaces)
+    char resource_url[256];
+    snprintf(resource_url, sizeof(resource_url), "%s", resource_raw);
+    size_t len = strlen(resource_url);
+    while (len > 0 && resource_url[len - 1] == ' ') {
+        resource_url[--len] = '\0';
+    }
+
+    uint64_t amount = strtoull(amount_str, NULL, 10);
+
+    ESP_LOGI(TAG, "💰 Dynamic Payment Requirements:");
+    ESP_LOGI(TAG, "   From: %s", PAYER_BASE58);
+    ESP_LOGI(TAG, "   To: %s", dynamic_payto);
+    ESP_LOGI(TAG, "   Token: %s", asset);
+    ESP_LOGI(TAG, "   Amount: %" PRIu64 " (0.%06" PRIu64 " USDC)", amount, amount);
+    ESP_LOGI(TAG, "");
+
+    // cJSON_Delete(req);
+
+    // === PHASE 2: Execute payment ===
+    ESP_LOGI(TAG, "📡 Step 1: Fetching recent blockhash...");
     uint8_t blockhash[32];
     if (!fetch_recent_blockhash(blockhash)) {
         ESP_LOGE(TAG, "❌ Failed to fetch blockhash");
         return;
     }
-    
-    // Build transaction
-    const char* payto = "2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4";
-    const char* mint = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
-    uint64_t amount = 10000;
-    uint8_t decimals = 6;
-    
+
+    ESP_LOGI(TAG, "🔨 Step 2: Building transaction...");
     uint8_t* tx_message;
     size_t tx_len;
-    
-    bool success = build_solana_transaction(
-        PAYER_PUBKEY,
-        payto,
-        mint,
-        amount,
-        decimals,
-        blockhash,
-        &tx_message,
-        &tx_len
-    );
-    
-    if (success) {
-        ESP_LOGI(TAG, "");
-        ESP_LOGI(TAG, "🎉 STEP 3C TEST PASSED!");
-        ESP_LOGI(TAG, "   ✅ Fetched recent blockhash");
-        ESP_LOGI(TAG, "   ✅ Derived ATAs");
-        ESP_LOGI(TAG, "   ✅ Built compute budget instructions");
-        ESP_LOGI(TAG, "   ✅ Built transfer instruction");
-        ESP_LOGI(TAG, "   ✅ Assembled transaction message");
-        ESP_LOGI(TAG, "   Transaction size: %d bytes", tx_len);
-        
-        // **ADD THIS: Output complete hex for verification**
-        ESP_LOGI(TAG, "");
-        ESP_LOGI(TAG, "📋 COMPLETE TRANSACTION HEX (for verification):");
-        ESP_LOGI(TAG, "   Copy this entire hex dump:");
-        ESP_LOGI(TAG, "   ========================================");
-        
-        // Print in rows of 32 bytes for readability
-        for (size_t i = 0; i < tx_len; i += 32) {
-            size_t chunk_len = (tx_len - i) > 32 ? 32 : (tx_len - i);
-            char hex_line[97]; // 32*3 + 1
-            char* ptr = hex_line;
-            for (size_t j = 0; j < chunk_len; j++) {
-                ptr += sprintf(ptr, "%02x ", tx_message[i + j]);
-            }
-            ESP_LOGI(TAG, "   %s", hex_line);
-        }
-        ESP_LOGI(TAG, "   ========================================");
-        
-        ESP_LOGI(TAG, "");
-        ESP_LOGI(TAG, "   First 64 bytes:");
-        ESP_LOG_BUFFER_HEX_LEVEL(TAG, tx_message, tx_len > 64 ? 64 : tx_len, ESP_LOG_INFO);
-        
-        free(tx_message);
-    } else {
-        ESP_LOGE(TAG, "❌ STEP 3C TEST FAILED");
+    if (!build_solana_transaction(PAYER_PUBKEY, dynamic_payto, fee_payer_base58, TOKEN_MINT,
+                                   amount, TOKEN_DECIMALS, blockhash,
+                                   &tx_message, &tx_len)) {
+        ESP_LOGE(TAG, "❌ Failed to build transaction");
+        return;
     }
-    
+    ESP_LOGI(TAG, "✅ Built transaction (%d bytes)", tx_len);
+
+    ESP_LOGI(TAG, "🔐 Step 3: Signing transaction...");
+    uint8_t signature[64];
+    if (!ed25519_sign_message(signature, tx_message, tx_len, PAYER_PRIVATE_KEY, PAYER_PUBKEY)) {
+        ESP_LOGE(TAG, "❌ Failed to sign transaction");
+        free(tx_message);
+        return;
+    }
+    ESP_LOGI(TAG, "✅ Transaction signed");
+
+    ESP_LOGI(TAG, "📦 Step 4: Building complete signed transaction...");
+    char* base64_tx;
+    if (!build_signed_transaction(tx_message, tx_len, signature, &base64_tx)) {
+        ESP_LOGE(TAG, "❌ Failed to encode transaction");
+        free(tx_message);
+        return;
+    }
+    ESP_LOGI(TAG, "✅ Complete transaction ready (%d bytes base64)", strlen(base64_tx));
+    // ➕ ADD THIS BLOCK TO PRINT FOR SOLANA EXPLORER:
     ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "==========================================");
+    ESP_LOGI(TAG, "🔍 To inspect in Solana Explorer, go to:");
+    ESP_LOGI(TAG, "   https://explorer.solana.com/tx/inspector?cluster=devnet");
     ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "📋 Paste this Base64-encoded transaction:");
+    ESP_LOGI(TAG, "%s", base64_tx);
+    ESP_LOGI(TAG, "");
+    free(tx_message);
+
+    // ⬇️ ⬇️ ⬇️ ADD THIS BLOCK ⬇️ ⬇️ ⬇️
+    // === PHASE 2.5: Wrap transaction in x402 JSON Payload ===
+    char* x_payment_header = build_x_payment_payload(base64_tx);
+    free(base64_tx); // Free the inner tx string, we don't need it anymore
+
+    if (!x_payment_header) {
+        ESP_LOGE(TAG, "❌ Failed to build final X-PAYMENT JSON payload");
+        return;
+    }
+    // ⬆️ ⬆️ ⬆️ END OF ADDED BLOCK ⬆️ ⬆️ ⬆️
+
+    ESP_LOGI(TAG, "💳 Step 5: Submitting payment to PayAI...");
+
+    char* content = NULL;
+    // Use the dynamic `resource_url` from the 402 response
+    if (make_x402_payment_request(resource_url, x_payment_header, &content)) {
+        ESP_LOGI(TAG, "");
+        ESP_LOGI(TAG, "╔════════════════════════════════════════════════════════╗");
+        ESP_LOGI(TAG, "║              🎉 PAYMENT SUCCESSFUL! 🎉                 ║");
+        ESP_LOGI(TAG, "╚════════════════════════════════════════════════════════╝");
+        ESP_LOGI(TAG, "");
+        if (content) {
+            ESP_LOGI(TAG, "📄 Received Content:");
+            ESP_LOGI(TAG, "─────────────────────────────────────────────────────");
+            ESP_LOGI(TAG, "%s", content);
+            ESP_LOGI(TAG, "─────────────────────────────────────────────────────");
+            free(content);
+        }
+        ESP_LOGI(TAG, "");
+        ESP_LOGI(TAG, "✅ x402 payment flow completed successfully!");
+    } else {
+        ESP_LOGE(TAG, "");
+        ESP_LOGE(TAG, "❌ Payment failed or rejected");
+        ESP_LOGE(TAG, "");
+        ESP_LOGE(TAG, "Troubleshooting:");
+        ESP_LOGE(TAG, "  1. Check blockhash freshness (< 2 min)");
+        ESP_LOGE(TAG, "  2. Verify USDC balance and ATA existence");
+        ESP_LOGE(TAG, "  3. Ensure correct 'payTo' from 402 response");
+        ESP_LOGE(TAG, "  4. Confirm PayAI is accepting devnet payments");
+    }
+    cJSON_Delete(req);
+    free(x_payment_header);
 }
 
 // === MAIN ===
 extern "C" void app_main(void) {
     ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "╔════════════════════════════════════════╗");
-    ESP_LOGI(TAG, "║   ESP32-C6 x402 Client - Step 3C      ║");
-    ESP_LOGI(TAG, "║   Complete Transaction Assembly        ║");
-    ESP_LOGI(TAG, "╚════════════════════════════════════════╝");
+    ESP_LOGI(TAG, "╔════════════════════════════════════════════════════════╗");
+    ESP_LOGI(TAG, "║          ESP32-C6 x402 Payment Client v1.0            ║");
+    ESP_LOGI(TAG, "║         Pay-per-use Internet with Solana               ║");
+    ESP_LOGI(TAG, "╚════════════════════════════════════════════════════════╝");
     ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "Wallet: %s", PAYER_BASE58);
     
     // Initialize libsodium
     if (sodium_init() < 0) {
-        ESP_LOGE(TAG, "❌ Failed to initialize libsodium!");
+        ESP_LOGE(TAG, "❌ Failed to initialize libsodium");
         return;
     }
-    ESP_LOGI(TAG, "✅ libsodium initialized successfully");
-    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "✅ Libsodium initialized");
     
     // Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
+        nvs_flash_erase();
+        nvs_flash_init();
     }
-    ESP_ERROR_CHECK(ret);
-
-    // Initialize WiFi
+    
+    // Connect to WiFi
+    ESP_LOGI(TAG, "📡 Connecting to WiFi...");
     wifi_init_sta();
+    
     vTaskDelay(2000 / portTICK_PERIOD_MS);
-    ESP_LOGI(TAG, "WiFi connected");
 
-    test_transaction_assembly();
-
+    uint8_t test_out[32];
+    const char* test_addr = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
+    ESP_LOGI(TAG, "🧪 Testing Base58 decode...");
+    if (solana_base58_to_bytes(test_addr, test_out)) {
+        ESP_LOGI(TAG, "✅ Test decode OK");
+        ESP_LOG_BUFFER_HEX(TAG, test_out, 32);
+    } else {
+        ESP_LOGE(TAG, "❌ Test decode FAILED");
+    }
+    
+    // Run the x402 payment client
+    run_x402_client();
+    
+    ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "📊 Free heap: %lu bytes", (unsigned long)esp_get_free_heap_size());
     ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "Step 3C complete!");
-    ESP_LOGI(TAG, "Next: Step 3D will sign and serialize the transaction");
+    ESP_LOGI(TAG, "═══════════════════════════════════════════════════════");
+    ESP_LOGI(TAG, "Program complete. Device will idle.");
+    ESP_LOGI(TAG, "Press RESET button to run payment again.");
+    ESP_LOGI(TAG, "═══════════════════════════════════════════════════════");
+    ESP_LOGI(TAG, "");
 
-    // test_spl_instruction();
-    
-    // ESP_LOGI(TAG, "");
-    // ESP_LOGI(TAG, "📊 Free heap: %lu bytes", (unsigned long)esp_get_free_heap_size());
-    // ESP_LOGI(TAG, "");
-    // ESP_LOGI(TAG, "Step 3B complete. Ready for Step 3C!");
-
-    // **STEP 3A: Test fetching Solana blockhash**
-    // test_solana_blockhash();
-    
-    // ESP_LOGI(TAG, "");
-    // ESP_LOGI(TAG, "📊 Memory status:");
-    // ESP_LOGI(TAG, "   Free heap: %lu bytes", (unsigned long)esp_get_free_heap_size());
-    // ESP_LOGI(TAG, "");
-    
-    // ESP_LOGI(TAG, "Step 3A test complete.");
-    // ESP_LOGI(TAG, "If successful, we're ready for Step 3B: Build transaction!");
-    // ESP_LOGI(TAG, "");
-
-    // **STEP 2: Test real ED25519 signing**
-    // test_ed25519_signing();
-    
-    // // Continue with existing flow
-    // ESP_LOGI(TAG, "");
-    // ESP_LOGI(TAG, "Press Ctrl+C to stop, or wait 10 seconds to continue with payment flow...");
-    // vTaskDelay(10000 / portTICK_PERIOD_MS);
-    
-    // ESP_LOGI(TAG, "Fetching payment requirements from PayAI Echo...");
-    // cJSON* req = nullptr;
-    // if (!fetch_payment_requirements(&req)) {
-    //     ESP_LOGE(TAG, "Failed to get payment requirements");
-    //     return;
-    // }
-
-    // cJSON* accepts = cJSON_GetObjectItem(req, "accepts");
-    // if (!accepts || !cJSON_IsArray(accepts) || cJSON_GetArraySize(accepts) == 0) {
-    //     ESP_LOGE(TAG, "No payment methods in response");
-    //     cJSON_Delete(req);
-    //     return;
-    // }
-
-    // cJSON* first = cJSON_GetArrayItem(accepts, 0);
-    // const char* pay_to = cJSON_GetStringValue(cJSON_GetObjectItem(first, "payTo"));
-    // const char* resource = cJSON_GetStringValue(cJSON_GetObjectItem(first, "resource"));
-    // const char* amount_str = cJSON_GetStringValue(cJSON_GetObjectItem(first, "maxAmountRequired"));
-    // const char* asset = cJSON_GetStringValue(cJSON_GetObjectItem(first, "asset"));
-
-    // if (!pay_to || !resource || !amount_str || !asset) {
-    //     ESP_LOGE(TAG, "Missing required fields in payment requirements");
-    //     cJSON_Delete(req);
-    //     return;
-    // }
-
-    // uint64_t amount = strtoull(amount_str, nullptr, 10);
-    // ESP_LOGI(TAG, "Payment required: %llu lamports", amount);
-    // ESP_LOGI(TAG, "Pay to: %s", pay_to);
-    // ESP_LOGI(TAG, "Asset: %s", asset);
-
-    // ESP_LOGW(TAG, "⚠️  NOTE: Transaction building is still PLACEHOLDER");
-    // ESP_LOGW(TAG, "    Next: Step 3 will build real Solana transactions");
-    
-    // char* x_payment_b64 = build_x_payment_header(pay_to, asset, amount);
-    // if (!x_payment_b64) {
-    //     ESP_LOGE(TAG, "Failed to build X-PAYMENT header");
-    //     cJSON_Delete(req);
-    //     return;
-    // }
-
-    // bool success = submit_with_payment(x_payment_b64);
-    // free(x_payment_b64);
-    // cJSON_Delete(req);
-
-    // if (success) {
-    //     ESP_LOGI(TAG, "🎉 x402 flow completed on ESP32-C6!");
-    // } else {
-    //     ESP_LOGE(TAG, "💥 x402 flow failed - expected until Step 3 completes");
-    // }
-
-    // ESP_LOGI(TAG, "Test complete. Idling...");
     while (1) {
         vTaskDelay(10000 / portTICK_PERIOD_MS);
     }

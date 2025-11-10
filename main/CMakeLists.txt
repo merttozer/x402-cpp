@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "main.cpp" "base64.c"
+    SRCS "main.cpp" "base64.c" "base58.c" "solkunk.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi
