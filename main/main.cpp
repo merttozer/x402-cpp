@@ -82,10 +82,10 @@ bool solana_base58_to_bytes(const char* base58_str, uint8_t* out32) {
     ESP_LOGI(TAG, "Decoding Base58 string of length %d: '%s'", len, base58_str);
 
     size_t expected_len = 32;
-    bool success = b58tobin(out32, &expected_len, base58_str, len);
+    bool success = base58_decode(out32, &expected_len, base58_str, len);
     
     if (!success) {
-        ESP_LOGE(TAG, "b58tobin returned FALSE for input: %s", base58_str);
+        ESP_LOGE(TAG, "base58_decode returned FALSE for input: %s", base58_str);
         return false;
     }
     if (expected_len != 32) {

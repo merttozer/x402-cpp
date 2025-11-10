@@ -1,24 +1,9 @@
-/*
- * Copyright 2012-2014 Luke Dashjr
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the standard MIT license.  See COPYING for more details.
- */
-
-#ifndef WIN32
 #include <arpa/inet.h>
-#else
-#include <winsock2.h>
-#endif
-
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-
 #include "base58.h"
-
-bool (*b58_sha256_impl)(void *, const void *, size_t) = NULL;
 
 static const int8_t b58digits_map[] = {
 	-1,-1,-1,-1,-1,-1,-1,-1, -1,-1,-1,-1,-1,-1,-1,-1,
@@ -36,7 +21,7 @@ typedef uint32_t b58_almostmaxint_t;
 #define b58_almostmaxint_bits (sizeof(b58_almostmaxint_t) * 8)
 static const b58_almostmaxint_t b58_almostmaxint_mask = ((((b58_maxint_t)1) << b58_almostmaxint_bits) - 1);
 
-bool b58tobin(void *bin, size_t *binszp, const char *b58, size_t b58sz)
+bool base58_decode(void *bin, size_t *binszp, const char *b58, size_t b58sz)
 {
 	size_t binsz = *binszp;
 	const unsigned char *b58u = (void*)b58;
@@ -110,96 +95,4 @@ bool b58tobin(void *bin, size_t *binszp, const char *b58, size_t b58sz)
 	*binszp += zerocount;
 	
 	return true;
-}
-
-static
-bool my_dblsha256(void *hash, const void *data, size_t datasz)
-{
-	uint8_t buf[0x20];
-	return b58_sha256_impl(buf, data, datasz) && b58_sha256_impl(hash, buf, sizeof(buf));
-}
-
-int b58check(const void *bin, size_t binsz, const char *base58str, size_t b58sz)
-{
-	unsigned char buf[32];
-	const uint8_t *binc = bin;
-	unsigned i;
-	if (binsz < 4)
-		return -4;
-	if (!my_dblsha256(buf, bin, binsz - 4))
-		return -2;
-	if (memcmp(&binc[binsz - 4], buf, 4))
-		return -1;
-	
-	// Check number of zeros is correct AFTER verifying checksum (to avoid possibility of accessing base58str beyond the end)
-	for (i = 0; binc[i] == '\0' && base58str[i] == '1'; ++i)
-	{}  // Just finding the end of zeros, nothing to do in loop
-	if (binc[i] == '\0' || base58str[i] == '1')
-		return -3;
-	
-	return binc[0];
-}
-
-static const char b58digits_ordered[] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-
-bool b58enc(char *b58, size_t *b58sz, const void *data, size_t binsz)
-{
-	const uint8_t *bin = data;
-	int carry;
-	size_t i, j, high, zcount = 0;
-	size_t size;
-	
-	while (zcount < binsz && !bin[zcount])
-		++zcount;
-	
-	size = (binsz - zcount) * 138 / 100 + 1;
-	uint8_t buf[size];
-	memset(buf, 0, size);
-	
-	for (i = zcount, high = size - 1; i < binsz; ++i, high = j)
-	{
-		for (carry = bin[i], j = size - 1; (j > high) || carry; --j)
-		{
-			carry += 256 * buf[j];
-			buf[j] = carry % 58;
-			carry /= 58;
-			if (!j) {
-				// Otherwise j wraps to maxint which is > high
-				break;
-			}
-		}
-	}
-	
-	for (j = 0; j < size && !buf[j]; ++j);
-	
-	if (*b58sz <= zcount + size - j)
-	{
-		*b58sz = zcount + size - j + 1;
-		return false;
-	}
-	
-	if (zcount)
-		memset(b58, '1', zcount);
-	for (i = zcount; j < size; ++i, ++j)
-		b58[i] = b58digits_ordered[buf[j]];
-	b58[i] = '\0';
-	*b58sz = i + 1;
-	
-	return true;
-}
-
-bool b58check_enc(char *b58c, size_t *b58c_sz, uint8_t ver, const void *data, size_t datasz)
-{
-	uint8_t buf[1 + datasz + 0x20];
-	uint8_t *hash = &buf[1 + datasz];
-	
-	buf[0] = ver;
-	memcpy(&buf[1], data, datasz);
-	if (!my_dblsha256(hash, buf, datasz + 1))
-	{
-		*b58c_sz = 0;
-		return false;
-	}
-	
-	return b58enc(b58c, b58c_sz, buf, 1 + datasz + 4);
 }
