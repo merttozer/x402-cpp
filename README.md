@@ -15,6 +15,8 @@ Check out the ESP32 X402 Payment Client in action making real payments on Solana
 
 This demo uses the [PayAI Echo Merchant](https://x402.payai.network/) service to demonstrate the complete X402 payment flow.
 
+Wallet used: https://explorer.solana.com/address/2KUCmtebQBgQS78QzBJGMWfuq6peTcvjUD7mUnyX2yZ1?cluster=devnet
+
 ## 🌟 Features
 
 - **Full X402 Protocol Support**: Complete implementation of the X402 payment protocol specification
