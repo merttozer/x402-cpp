@@ -9,13 +9,10 @@ A comprehensive C/C++ library implementation of the [X402 Payment Protocol](http
 
 ## 🎬 Live Demo
 
-Check out the ESP32 X402 Payment Client in action making real payments on Solana Devnet:
+Watch the ESP32-C6 making real payments on Solana Devnet: **[▶️ YouTube Demo](https://youtube.com/shorts/yQqeUG1CKlk)**
 
-**[▶️ Watch Demo on YouTube Shorts](https://youtube.com/shorts/yQqeUG1CKlk)**
-
-This demo uses the [PayAI Echo Merchant](https://x402.payai.network/) service to demonstrate the complete X402 payment flow.
-
-Wallet used: https://explorer.solana.com/address/2KUCmtebQBgQS78QzBJGMWfuq6peTcvjUD7mUnyX2yZ1?cluster=devnet
+- **Merchant**: [PayAI Echo Merchant](https://x402.payai.network/)
+- **Test Wallet**: [2KUCmt...X2yZ1](https://explorer.solana.com/address/2KUCmtebQBgQS78QzBJGMWfuq6peTcvjUD7mUnyX2yZ1?cluster=devnet)
 
 ## 🌟 Features
 
