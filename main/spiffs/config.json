@@ -1,8 +1,8 @@
 {
-  "wifi_ssid": "Ziggo0797231",
-  "wifi_password": "hgseAucf2Weed2ep",
-  "payer_public_key": [19,150,230,103,171,26,139,89,106,149,136,156,95,249,178,216,216,184,115,152,228,69,254,35,205,140,70,17,107,237,136,232],
-  "payer_private_key": [125,51,35,185,133,139,66,198,167,242,211,122,196,159,217,97,150,41,194,128,66,100,125,114,60,164,25,245,150,187,159,32],
+  "wifi_ssid": "YourWiFiSSID",
+  "wifi_password": "YourWiFiPassword",
+  "payer_public_key": [/* 32 bytes as decimal array */],
+  "payer_private_key": [/* 32 bytes as decimal array */],
   "payai_url": "https://x402.payai.network/api/solana-devnet/paid-content",
   "solana_rpc_url": "https://api.devnet.solana.com",
   "user_agent": "x402-esp32c6/1.0",

@@ -1,0 +1,66 @@
+X402 C/C++ Library
+Copyright (C) 2025 Mert Ozer
+
+DUAL LICENSE
+
+This software is available under two different licenses:
+
+1. GNU Affero General Public License v3.0 (AGPL-3.0) - for open source use
+2. Commercial License - for proprietary/commercial use
+
+================================================================================
+
+OPTION 1: AGPL-3.0 (Open Source License)
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+details.
+
+You should have received a copy of the GNU Affero General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+
+IMPORTANT: If you use this software in a network service (SaaS), you MUST make
+the complete source code available to your users under AGPL-3.0 terms.
+
+================================================================================
+
+OPTION 2: Commercial License
+
+If you want to use this software in a commercial/proprietary application without
+the open source requirements of AGPL-3.0, you must purchase a commercial license.
+
+A commercial license allows you to:
+- Use the software without disclosing your source code
+- Embed in proprietary products and IoT devices
+- Deploy as SaaS without sharing modifications
+- Remove attribution and licensing notices
+
+To purchase a commercial license or for more information:
+Email: mertt.ozer@hotmail.com
+Web: https://github.com/merttozer
+
+================================================================================
+
+How to choose:
+
+Use AGPL-3.0 if:
+✓ Your project is open source
+✓ You will share all source code modifications
+✓ Personal/educational/research use
+
+Use Commercial License if:
+✓ Building commercial products
+✓ Want to keep source code private
+✓ Embedding in hardware devices
+✓ Running as a paid SaaS service
+
+================================================================================
+
+For the complete AGPL-3.0 license text, visit:
+https://www.gnu.org/licenses/agpl-3.0.txt

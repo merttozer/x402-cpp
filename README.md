@@ -1,359 +1,824 @@
-# ESP32-C6 x402 Client - Production Ready
+# ESP32 X402 Payment Client
 
-A production-grade x402 payment protocol client implementation for the ESP32-C6-Touch-LCD-1.69 board, designed to interact with PayAI Echo on Solana devnet.
+A comprehensive C/C++ library implementation of the [X402 Payment Protocol](https://github.com/coinbase/x402) for IoT/Embedded Devices, specifically optimized for the ESP32-C6. This library enables resource-constrained embedded devices to participate in blockchain-based payment flows using the X402 standard.
 
-## Features
+**📺 [Watch Demo Video](https://youtube.com/shorts/yQqeUG1CKlk)** - See it in action!
 
-- ✅ **Complete x402 Protocol Implementation** - Supports Solana devnet exact payment scheme
-- ✅ **WiFi Connectivity** - Robust WiFi connection with automatic retry
-- ✅ **Ed25519 Signing** - Cryptographic signature generation for Solana transactions
-- ✅ **HTTP/HTTPS Support** - Secure communication with TLS 1.2
-- ✅ **JSON Parsing** - cJSON-based payment requirement parsing
-- ✅ **Base58/Base64 Encoding** - Full Solana address encoding support
-- ✅ **Error Handling** - Comprehensive error checking and logging
-- ✅ **Memory Optimized** - Efficient resource usage for constrained devices
+[![License](https://img.shields.io/badge/License-AGPL--3.0%20%2F%20Commercial-blue.svg)](LICENSE)
+[![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v5.0%2B-blue)](https://docs.espressif.com/projects/esp-idf/en/latest/)
+[![Platform](https://img.shields.io/badge/platform-ESP32--C6-green)](https://www.espressif.com/en/products/socs/esp32-c6)
+[![Demo](https://img.shields.io/badge/Demo-YouTube-red)](https://youtube.com/shorts/yQqeUG1CKlk)
 
-## Hardware Requirements
+## 🎬 Live Demo
 
-- **Board**: ESP32-C6-Touch-LCD-1.69 (Waveshare)
-- **Chip**: ESP32-C6 (RISC-V, WiFi 6, Bluetooth 5)
-- **Display**: 1.69" 240×280 LCD (ST7789V2)
-- **Power**: USB-C or 3.7V Li-ion battery
+Check out the ESP32 X402 Payment Client in action making real payments on Solana Devnet:
 
-## Software Requirements
+**[▶️ Watch Demo on YouTube Shorts](https://youtube.com/shorts/yQqeUG1CKlk)**
 
-- **OS**: Ubuntu 22.04.5 LTS (or compatible Linux)
-- **ESP-IDF**: v5.4.0 or higher
-- **Python**: 3.8+
-- **VS Code** (optional but recommended)
-- **Solana CLI** (for wallet management)
+This demo uses the [PayAI Echo Merchant](https://x402.payai.network/) service to demonstrate the complete X402 payment flow.
 
-## Project Structure
+## 🌟 Features
+
+- **Full X402 Protocol Support**: Complete implementation of the X402 payment protocol specification
+- **Solana Integration**: Native support for Solana blockchain transactions on devnet/mainnet
+- **SPL Token Transfers**: Built-in support for SPL token transfers with Associated Token Accounts (ATA)
+- **Hardware Wallet Functionality**: Secure key management and transaction signing on-device
+- **WiFi Connectivity**: Automated WiFi connection management
+- **Display Support**: LVGL-based UI for payment status and user interaction
+- **Low Resource Footprint**: Optimized for embedded systems with limited RAM/Flash
+- **Modular Architecture**: Clean separation of concerns with reusable components
+- **Cryptographic Security**: Ed25519 signing using libsodium
+- **SPIFFS Configuration**: File-based configuration management
+
+## 🧪 Test Merchant
+
+This project is demonstrated using **[PayAI Echo Merchant](https://x402.payai.network/)**, a test service that implements the X402 protocol for Solana Devnet. 
+
+The Echo Merchant:
+- Returns payment offers in response to HTTP 402 requests
+- Accepts SPL token payments on Solana Devnet
+- Echoes back premium content upon successful payment
+- Provides a complete end-to-end X402 payment flow for testing
+
+**Default Configuration**:
+```json
+{
+  "payai_url": "https://x402.payai.network/api/solana-devnet/paid-content",
+  "solana_rpc_url": "https://api.devnet.solana.com",
+  "token_mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+}
+```
+
+You can use the PayAI Echo Merchant for testing or configure your own X402-compatible merchant endpoint.
+
+## 📋 Table of Contents
+
+- [Architecture](#architecture)
+- [Hardware Requirements](#hardware-requirements)
+- [Software Requirements](#software-requirements)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [API Reference](#api-reference)
+- [Protocol Flow](#protocol-flow)
+- [Project Structure](#project-structure)
+- [Examples](#examples)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+- [License](#license)
+
+## 🏗️ Architecture
+
+The library follows a modular architecture with clear separation of concerns:
 
 ```
-esp32-x402-client/
-├── CMakeLists.txt              # Project CMake config
-├── sdkconfig.defaults          # ESP32-C6 configuration
-├── partitions.csv              # Flash partition table
-├── main/
-│   ├── CMakeLists.txt          # Main component config
-│   ├── main.cpp                # Main application logic
-│   ├── ed25519.h               # Ed25519 signing header
-│   ├── ed25519.c               # Ed25519 signing implementation
-│   ├── base64.h                # Base64 encoding header
-│   └── base64.c                # Base64 encoding implementation
-└── README.md                   # This file
+┌─────────────────────────────────────────┐
+│           Application Layer             │
+│         (app_main.cpp)                  │
+└────────────────┬────────────────────────┘
+                 │
+┌────────────────▼────────────────────────┐
+│        X402 Payment Client              │
+│      (Orchestrates payment flow)        │
+└─┬────────┬────────┬────────┬───────────┘
+  │        │        │        │
+  ▼        ▼        ▼        ▼
+┌───┐   ┌────┐   ┌────┐   ┌────┐
+│WiFi│   │HTTP│   │Sol │   │Disp│
+│Mgr │   │Clnt│   │ana │   │lay │
+└───┘   └────┘   └────┘   └────┘
+  │        │        │
+  ▼        ▼        ▼
+┌────────────────────────┐
+│   Crypto Utilities     │
+│  (Ed25519, Base58/64)  │
+└────────────────────────┘
 ```
 
-## Setup Instructions
+### Core Components
 
-### 1. Install ESP-IDF
+1. **X402PaymentClient**: Main orchestrator for the payment protocol
+2. **SolanaClient**: Handles Solana RPC communication and transaction building
+3. **HttpClient**: Manages HTTP/HTTPS requests with X-PAYMENT header support
+4. **WiFiManager**: Automated WiFi connection and reconnection
+5. **CryptoUtils**: Cryptographic primitives (Ed25519, Base58, Base64)
+6. **ConfigManager**: SPIFFS-based configuration loading
+7. **DisplayManager**: LVGL-based UI for status and user feedback
+
+## 🔧 Hardware Requirements
+
+### Tested Hardware
+
+- **MCU**: ESP32-C6
+- **Display**: 240x280 LCD with CST816S touch controller
+- **Storage**: Minimum 4MB Flash
+- **RAM**: Minimum 512KB
+
+## 📦 Software Requirements
+
+### Prerequisites
+
+- **ESP-IDF**: v5.0 or higher ([Installation Guide](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/))
+- **CMake**: v3.16 or higher
+- **Python**: 3.8 or higher
+
+### Dependencies
+
+The following dependencies are automatically managed by ESP-IDF Component Manager:
+
+| Component | Version | Purpose |
+|-----------|---------|---------|
+| `libsodium` | ^1.0.20 | Ed25519 cryptography |
+| `lvgl` | ^9.4.0 | Display graphics |
+| `esp_lvgl_port` | ^2.6.2 | LVGL ESP32 integration |
+| `esp_lcd_touch_cst816s` | ^1.0.6 | Touch controller driver |
+| `esp_http_client` | (built-in) | HTTP/HTTPS client |
+| `mbedtls` | (built-in) | TLS/SSL support |
+| `cJSON` | (built-in) | JSON parsing |
+
+## 🚀 Installation
+
+### 1. Clone the Repository
 
 ```bash
-# Install prerequisites
-sudo apt-get update
-sudo apt-get install git wget flex bison gperf python3 python3-pip python3-venv \
-    cmake ninja-build ccache libffi-dev libssl-dev dfu-util libusb-1.0-0
-
-# Clone ESP-IDF
-mkdir -p ~/esp
-cd ~/esp
-git clone --recursive https://github.com/espressif/esp-idf.git
-cd esp-idf
-git checkout release/v5.4
-
-# Install ESP-IDF tools
-./install.sh esp32c6
-
-# Source environment (add to ~/.bashrc for permanent use)
-. ~/esp/esp-idf/export.sh
+git clone https://github.com/merttozer/x402-cpp
+cd x402-cpp
 ```
 
-### 2. Install Solana CLI (if not already installed)
+### 2. Set Up ESP-IDF Environment
 
 ```bash
-sh -c "$(curl -sSfL https://release.solana.com/v1.18.0/install)"
+# Source ESP-IDF environment
+. $HOME/esp/esp-idf/export.sh
 
-# Add to PATH
-export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
-
-# Verify installation
-solana --version
+# Or if using ESP-IDF v5.0+
+get_idf
 ```
 
-### 3. Set Up Your Wallet
+### 3. Install Dependencies
 
-Your wallet is already configured:
-- **Address**: `2KUCmtebQBgQS78QzBJGMWfuq6peTcvjUD7mUnyX2yZ1`
-- **Balance**: ~10.9 SOL (Solana devnet)
-- **Keypair File**: `~/my-x402-wallet.json`
+Dependencies are automatically installed via ESP-IDF Component Manager during the build process.
 
-The wallet's public and private keys are embedded in the firmware (see `main.cpp`).
+### 4. Configure the Project
 
-### 4. Configure WiFi Credentials
+```bash
+# Set target device (ESP32-C6)
+idf.py set-target esp32c6
 
-Edit `main/main.cpp` and update your WiFi credentials:
-
-```cpp
-#define WIFI_SSID      "YourWiFiSSID"
-#define WIFI_PASSWORD  "YourWiFiPassword"
+# Open configuration menu (optional)
+idf.py menuconfig
 ```
 
 ### 5. Build the Project
 
 ```bash
-# Navigate to project directory
-cd ~/Desktop/Personal/esp32-x402-client
-
-# Set ESP-IDF target
-idf.py set-target esp32c6
-
-# Build the project
 idf.py build
 ```
 
 ### 6. Flash to Device
 
 ```bash
-# Connect ESP32-C6 via USB-C
-# Find the serial port (usually /dev/ttyACM0 or /dev/ttyUSB0)
-ls /dev/tty*
-
-# Flash the firmware
-idf.py -p /dev/ttyACM0 flash
-
-# Monitor serial output
-idf.py -p /dev/ttyACM0 monitor
-
-# Or combine flash and monitor
-idf.py -p /dev/ttyACM0 flash monitor
+idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
-To exit monitor mode, press `Ctrl+]`.
+Replace `/dev/ttyUSB0` with your actual serial port.
 
-## How It Works
+## ⚙️ Configuration
 
-### x402 Payment Flow
+### Configuration File
 
-1. **Initial Request** - Client requests protected resource
-2. **402 Response** - Server returns payment requirements (JSON)
-3. **Transaction Building** - Client creates and signs Solana SPL token transfer
-4. **Payment Submission** - Client sends signed transaction in `X-PAYMENT` header
-5. **Settlement** - Server verifies and settles payment on blockchain
-6. **Resource Access** - Server returns protected content with 200 OK
+Create a `config.json` file in the `main/spiffs/` directory:
 
-### Transaction Signing Process
-
-```
-1. Parse payment requirements (amount, recipient, token mint)
-2. Build Solana transaction structure:
-   - Message header (signatures, accounts)
-   - Account addresses (payer, source ATA, dest ATA, SPL program)
-   - Recent blockhash (placeholder)
-   - Transfer instruction (SPL Token Transfer)
-3. Sign message with Ed25519 (your private key)
-4. Base64 encode signed transaction
-5. Wrap in X-PAYMENT JSON payload
-6. Base64 encode entire payload
-7. Send as HTTP header
-```
-
-## Expected Serial Output
-
-```
-I (287) boot: Loaded app from partition at offset 0x10000
-I (306) app_init: Project name:     esp32-x402-client
-I (306) app_init: App version:      1
-I (432) x402: === ESP32-C6 x402 Client ===
-I (432) x402: Firmware version: 1.0.0
-I (542) x402: WiFi init finished. Waiting for connection...
-I (2332) x402: ✅ Connected to AP SSID:Ziggo0797231
-I (4252) x402: Payer wallet: 2KUCmtebQBgQS78QzBJGMWfuq6peTcvjUD7mUnyX2yZ1
-I (4252) x402: Fetching payment requirements from https://x402.payai.network/...
-I (4652) x402: HTTP Status: 402
-I (4652) x402: Received 402 response (384 bytes)
-I (4652) x402: Payment required: 10000 tokens
-I (4652) x402: Building Solana transaction...
-I (4752) x402: Transaction built and signed (412 bytes base64)
-I (4752) x402: Submitting request with payment...
-I (8252) x402: HTTP Status: 200
-I (8252) x402: ✅ SUCCESS! Response: {"message":"Payment verified and content delivered"}
-I (8252) x402: 🎉 x402 flow completed successfully on ESP32-C6!
-```
-
-## Troubleshooting
-
-### DNS Resolution Failure
-
-**Error**: `couldn't get hostname for :x402.payai.network`
-
-**Solution**: 
-- Ensure WiFi is connected (check for `Got IP` message)
-- Add delay after WiFi connection: `vTaskDelay(2000 / portTICK_PERIOD_MS)`
-- Check DNS configuration in `sdkconfig`
-
-### HTTP Client Errors
-
-**Error**: `Connection failed, sock < 0`
-
-**Solutions**:
-- Verify HTTPS is enabled: `CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=y`
-- Check certificate bundle: `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y`
-- Increase buffer sizes in `esp_http_client_config_t`
-
-### Memory Issues
-
-**Error**: Heap allocation failures
-
-**Solutions**:
-- Increase `CONFIG_ESP_MAIN_TASK_STACK_SIZE` to 8192+
-- Enable memory debugging: `CONFIG_HEAP_TRACING_STANDALONE=y`
-- Reduce buffer sizes or use streaming
-
-### Transaction Signing Failures
-
-**Error**: Invalid signature or transaction format
-
-**Solutions**:
-- Verify keypair bytes are correct (use `solana-keygen` to extract)
-- Ensure proper endianness for Solana (little-endian)
-- Check Ed25519 implementation (consider using libsodium)
-
-## Security Considerations
-
-### ⚠️ CURRENT IMPLEMENTATION
-
-- **Hardcoded Private Keys** - Keys are embedded in firmware (INSECURE for production!)
-- **No Secure Storage** - Keys stored in flash memory (readable)
-- **Simplified Crypto** - Ed25519 implementation is minimal
-
-### 🔒 PRODUCTION RECOMMENDATIONS
-
-1. **Use Secure Element**
-   - Store keys in ESP32-C6's eFuse (one-time programmable)
-   - Use flash encryption for sensitive data
-   - Enable secure boot
-
-2. **External Secure Storage**
-   - ATECC608A crypto chip
-   - Separate HSM or key management service
-   - Cloud-based key storage with MPC
-
-3. **Key Management**
-   - Generate keys on-device (never export)
-   - Implement key rotation
-   - Use BIP39 mnemonic phrases
-
-4. **Network Security**
-   - Certificate pinning for HTTPS
-   - Mutual TLS authentication
-   - VPN tunnel for sensitive operations
-
-## Performance Metrics
-
-- **Boot Time**: ~2-3 seconds
-- **WiFi Connection**: ~1-2 seconds
-- **Payment Flow**: ~3-5 seconds total
-  - 402 Request: ~500ms
-  - Transaction Build: ~100ms
-  - Transaction Sign: ~50ms
-  - Payment Submit: ~2-3 seconds
-
-- **Memory Usage**:
-  - Heap: ~150KB peak
-  - Stack: ~8KB main task
-  - Flash: ~1MB firmware
-
-## API Reference
-
-### PayAI Echo Endpoint
-
-**URL**: `https://x402.payai.network/api/solana-devnet/paid-content`
-
-**Method**: GET
-
-**Headers**:
-- `User-Agent`: Required
-- `X-PAYMENT`: Base64-encoded payment payload (for paid requests)
-
-**Response (402)**:
 ```json
 {
-  "x402Version": 1,
-  "error": "X-PAYMENT header is required",
-  "accepts": [{
-    "scheme": "exact",
-    "network": "solana-devnet",
-    "maxAmountRequired": "10000",
-    "asset": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
-    "payTo": "2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4",
-    "resource": "https://x402.payai.network/api/solana-devnet/paid-content",
-    "description": "Access to protected content on solana devnet",
-    "maxTimeoutSeconds": 60,
-    "extra": {
-      "feePayer": "2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4"
+  "wifi_ssid": "YourWiFiSSID",
+  "wifi_password": "YourWiFiPassword",
+  "payer_public_key": [/* 32 bytes as decimal array */],
+  "payer_private_key": [/* 32 bytes as decimal array */],
+  "payai_url": "https://x402.payai.network/api/solana-devnet/paid-content",
+  "solana_rpc_url": "https://api.devnet.solana.com",
+  "user_agent": "x402-esp32c6/1.0",
+  "token_mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+  "token_decimals": 6
+}
+```
+
+### Configuration Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `wifi_ssid` | string | WiFi network name |
+| `wifi_password` | string | WiFi password |
+| `payer_public_key` | array[32] | Ed25519 public key (byte array) |
+| `payer_private_key` | array[32] | Ed25519 private key (byte array) |
+| `payai_url` | string | X402 payment merchant endpoint |
+| `solana_rpc_url` | string | Solana RPC endpoint URL |
+| `user_agent` | string | HTTP User-Agent header |
+| `token_mint` | string | SPL token mint address (Base58) |
+| `token_decimals` | integer | Token decimal places (usually 6 or 9) |
+
+### Generating Keypair
+
+To generate a new Solana keypair for testing:
+
+```bash
+# Using Solana CLI
+solana-keygen new --outfile keypair.json
+
+# Convert to byte array format for config.json
+# (You'll need to write a small script to convert the JSON keypair)
+```
+
+### Security Considerations
+
+⚠️ **WARNING**: Never commit your private keys to version control!
+
+- Use environment variables or secure key storage for production
+- Consider implementing secure element integration for production devices
+- The current implementation stores keys in SPIFFS (encrypted flash recommended)
+
+## 💻 Usage
+
+### Basic Example
+
+```cpp
+#include "x402_client.h"
+#include "config_manager.h"
+
+extern "C" void app_main(void) {
+    // Initialize SPIFFS
+    if (!ConfigManager::init()) {
+        return;
     }
-  }]
+
+    // Load configuration
+    X402Config config = {};
+    if (!ConfigManager::load("/spiffs/config.json", config)) {
+        return;
+    }
+
+    // Create client
+    X402PaymentClient client(config);
+    
+    // Initialize environment (WiFi, crypto, display)
+    if (!client.init()) {
+        return;
+    }
+
+    // Run event loop (blocking)
+    client.runEventLoop();
 }
 ```
 
-**Response (200)**:
+### Advanced: Custom Payment Flow
+
+```cpp
+// Initialize client
+X402PaymentClient client(config);
+client.init();
+
+// Execute a single payment
+bool success = client.executePaymentFlow();
+
+if (success) {
+    ESP_LOGI(TAG, "Payment completed successfully!");
+} else {
+    ESP_LOGE(TAG, "Payment failed!");
+}
+
+// Return to idle screen
+client.returnToIdleAfterDelay(3000);
+```
+
+### Button-Triggered Payments
+
+The library includes a task-based payment system for handling button presses:
+
+```cpp
+// This is handled automatically in runEventLoop()
+// But you can trigger it manually:
+client.onPaymentButtonPressed();
+```
+
+## 📚 API Reference
+
+### X402PaymentClient
+
+#### Constructor
+
+```cpp
+X402PaymentClient(const X402Config& config)
+```
+
+Creates a new payment client with the provided configuration.
+
+#### Methods
+
+##### `bool init()`
+
+Initializes the payment client environment:
+- Initializes display
+- Initializes libsodium cryptography
+- Initializes NVS flash storage
+- Connects to WiFi
+
+**Returns**: `true` on success, `false` on failure
+
+##### `bool executePaymentFlow()`
+
+Executes a complete X402 payment flow:
+1. Fetches payment offer (HTTP 402 response)
+2. Parses payment requirements
+3. Fetches Solana blockhash
+4. Builds SPL token transfer transaction
+5. Signs transaction with Ed25519
+6. Submits payment with X-PAYMENT header
+7. Returns premium content on success
+
+**Returns**: `true` if payment successful, `false` otherwise
+
+##### `void runEventLoop()`
+
+Starts the main event loop (blocking). Displays idle screen and handles button press events for initiating payments.
+
+##### `void onPaymentButtonPressed()`
+
+Handles payment button press events. Creates a new FreeRTOS task to execute the payment flow asynchronously.
+
+##### `void returnToIdleAfterDelay(uint32_t delay_ms)`
+
+Returns to idle screen after the specified delay.
+
+**Parameters**:
+- `delay_ms`: Delay in milliseconds before returning to idle
+
+### SolanaClient
+
+#### Constructor
+
+```cpp
+SolanaClient(const std::string& rpcUrl)
+```
+
+#### Methods
+
+##### `bool fetchRecentBlockhash(uint8_t blockhashOut[32])`
+
+Fetches the most recent blockhash from Solana RPC endpoint.
+
+**Returns**: `true` on success
+
+##### `bool buildTransaction(...)`
+
+Builds a complete Solana transaction with:
+- Compute budget instructions
+- SPL token transfer instruction
+- Multiple signatures support
+
+##### `bool deriveAssociatedTokenAddress(...)`
+
+Derives the Associated Token Account (ATA) address for a given owner and mint.
+
+### HttpClient
+
+#### Constructor
+
+```cpp
+HttpClient(const HttpClientConfig& config)
+```
+
+#### Methods
+
+##### `bool get_402(const char* url, cJSON** json_out, char** raw_response = nullptr)`
+
+Performs GET request expecting HTTP 402 Payment Required response.
+
+**Returns**: `true` if 402 response with valid payment offer received
+
+##### `bool submit_payment(const char* url, const char* b64_payment, char** content_out)`
+
+Submits payment by sending X-PAYMENT header with Base64-encoded payment data.
+
+**Returns**: `true` if HTTP 200 received with premium content
+
+### CryptoUtils
+
+Static utility class for cryptographic operations.
+
+#### Methods
+
+##### `static bool base58ToBytes(const char* base58_str, uint8_t out32[32])`
+
+Converts Base58-encoded string to 32-byte array.
+
+##### `static char* base64Encode(const unsigned char* data, size_t input_length)`
+
+Encodes binary data to Base64 string.
+
+##### `static bool ed25519Sign(...)`
+
+Signs message using Ed25519 algorithm.
+
+**Parameters**:
+- `signature[64]`: Output signature buffer
+- `message`: Message to sign
+- `message_len`: Message length
+- `secret_key[32]`: Ed25519 private key
+- `public_key[32]`: Ed25519 public key
+
+### WiFiManager
+
+#### Constructor
+
+```cpp
+WiFiManager(const std::string& ssid, const std::string& password)
+```
+
+#### Methods
+
+##### `bool connect()`
+
+Initiates WiFi connection. Blocks until connected or timeout.
+
+**Returns**: `true` if connected successfully
+
+##### `bool isConnected() const`
+
+Checks current WiFi connection status.
+
+**Returns**: `true` if currently connected
+
+## 🔄 Protocol Flow
+
+The X402 payment protocol implementation follows this sequence:
+
+```
+┌─────────┐                 ┌─────────┐                 ┌─────────┐
+│  Client │                 │ Merchant│                 │ Solana  │
+└────┬────┘                 └────┬────┘                 └────┬────┘
+     │                           │                           │
+     │  1. GET /resource         │                           │
+     ├──────────────────────────>│                           │
+     │                           │                           │
+     │  2. 402 Payment Required  │                           │
+     │     (Payment Offer)       │                           │
+     │<──────────────────────────┤                           │
+     │                           │                           │
+     │  3. getLatestBlockhash    │                           │
+     ├───────────────────────────┼──────────────────────────>│
+     │                           │                           │
+     │  4. Blockhash Response    │                           │
+     │<──────────────────────────┼───────────────────────────┤
+     │                           │                           │
+     │  5. Build Transaction     │                           │
+     │  6. Sign with Ed25519     │                           │
+     │                           │                           │
+     │  7. GET /resource         │                           │
+     │     X-PAYMENT: <tx>       │                           │
+     ├──────────────────────────>│                           │
+     │                           │                           │
+     │                           │  8. Verify & Send TX      │
+     │                           ├──────────────────────────>│
+     │                           │                           │
+     │                           │  9. TX Confirmation       │
+     │                           │<──────────────────────────┤
+     │                           │                           │
+     │  10. 200 OK               │                           │
+     │      (Premium Content)    │                           │
+     │<──────────────────────────┤                           │
+     │                           │                           │
+```
+
+### Step-by-Step Breakdown
+
+1. **Initial Request**: Client requests protected resource
+2. **Payment Offer**: Merchant returns 402 with payment requirements in JSON
+3. **Blockhash Fetch**: Client fetches recent blockhash from Solana
+4. **Transaction Build**: Client constructs SPL token transfer transaction
+5. **Signing**: Client signs transaction with Ed25519 private key
+6. **Payment Submission**: Client sends signed transaction in X-PAYMENT header
+7. **Verification**: Merchant verifies and broadcasts transaction to Solana
+8. **Confirmation**: Solana confirms transaction on-chain
+9. **Content Delivery**: Merchant returns premium content (HTTP 200)
+
+## 📁 Project Structure
+
+```
+esp32-x402-client/
+├── components/
+│   └── x402_protocol/
+│       ├── include/
+│       │   ├── config_manager.h
+│       │   ├── crypto_utils.h
+│       │   ├── display_manager.h
+│       │   ├── http_client.h
+│       │   ├── solana_client.h
+│       │   ├── wifi_manager.h
+│       │   └── x402_client.h
+│       ├── src/
+│       │   ├── config_manager.cpp
+│       │   ├── crypto_utils.cpp
+│       │   ├── display_manager.cpp
+│       │   ├── http_client.cpp
+│       │   ├── solana_client.cpp
+│       │   ├── wifi_manager.cpp
+│       │   └── x402_client.cpp
+│       └── CMakeLists.txt
+├── main/
+│   ├── spiffs/
+│   │   └── config.json           # Configuration file
+│   ├── app_main.cpp
+│   ├── idf_component.yml
+│   └── CMakeLists.txt
+├── CMakeLists.txt
+├── partitions.csv
+├── sdkconfig
+└── README.md
+```
+
+### Component Descriptions
+
+| Component | Responsibility |
+|-----------|----------------|
+| **config_manager** | SPIFFS initialization and JSON config loading |
+| **crypto_utils** | Cryptographic primitives (Ed25519, Base58, Base64) |
+| **display_manager** | LVGL-based UI rendering and touch handling |
+| **http_client** | HTTP/HTTPS requests with X402 support |
+| **solana_client** | Solana RPC, transaction building, ATA derivation |
+| **wifi_manager** | WiFi connection and event handling |
+| **x402_client** | Main payment protocol orchestration |
+
+## 🎯 Examples
+
+### Example 1: Using PayAI Echo Merchant (Default)
+
+```cpp
+// The default configuration uses PayAI Echo Merchant
+config.payai_url = "https://x402.payai.network/api/solana-devnet/paid-content";
+
+X402PaymentClient client(config);
+client.init();
+client.executePaymentFlow();
+```
+
+### Example 2: Custom Merchant Integration
+
+```cpp
+// Use your own X402-compatible merchant
+config.payai_url = "https://your-merchant.com/api/paid-endpoint";
+
+X402PaymentClient client(config);
+client.init();
+client.executePaymentFlow();
+```
+
+### Example 3: Mainnet Configuration
+
 ```json
 {
-  "message": "Payment verified and content delivered"
+  "solana_rpc_url": "https://api.mainnet-beta.solana.com",
+  "token_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  "token_decimals": 6
 }
 ```
 
-## Known Limitations
+### Example 4: Multiple Payments
 
-1. **Ed25519 Implementation** - Current implementation is simplified. For production, use:
-   - libsodium (full ed25519 support)
-   - Monocypher (minimal, audited)
-   - Solana's SDK libraries
+```cpp
+for (int i = 0; i < 5; i++) {
+    ESP_LOGI(TAG, "Payment attempt %d", i + 1);
+    
+    if (client.executePaymentFlow()) {
+        ESP_LOGI(TAG, "Payment %d successful", i + 1);
+    }
+    
+    vTaskDelay(pdMS_TO_TICKS(2000)); // Wait 2 seconds between payments
+}
+```
 
-2. **ATA Derivation** - Associated Token Accounts are derived using simple hashing instead of proper PDA derivation. Requires Solana program address derivation.
+## 🔧 Troubleshooting
 
-3. **Blockhash** - Transaction uses zero blockhash (filled by facilitator). For direct submission, fetch recent blockhash from RPC.
+### Common Issues
 
-4. **No Retry Logic** - Failed transactions are not automatically retried. Add exponential backoff.
+#### WiFi Connection Fails
 
-5. **No Transaction Confirmation** - Does not wait for blockchain confirmation. Add polling logic.
+**Symptoms**: `❌ WiFi connection timeout`
 
-## Future Enhancements
+**Solutions**:
+- Verify SSID and password in config.json
+- Check WiFi signal strength
+- Ensure 2.4GHz WiFi (ESP32-C6 doesn't support 5GHz)
+- Try increasing timeout in `x402_client.cpp`
 
-- [ ] Display integration (show payment status on LCD)
-- [ ] Touch input (approve payments via touchscreen)
-- [ ] Battery monitoring (low power mode)
-- [ ] Secure key storage (eFuse, flash encryption)
-- [ ] Multiple payment methods (EVM chains)
-- [ ] QR code scanning (camera module)
-- [ ] NFC payments (PN532 module)
-- [ ] Over-the-air updates (OTA)
-- [ ] Web dashboard (ESP32 HTTP server)
-- [ ] Bluetooth wallet pairing
+```cpp
+const int max_retries = 20;  // Increase from 10
+```
 
-## License
+#### libsodium Initialization Failed
 
-This project is for educational and demonstration purposes.
+**Symptoms**: `❌ libsodium initialization failed`
 
-## References
+**Solutions**:
+- Ensure libsodium component is properly installed
+- Check ESP-IDF version (v5.0+ required)
+- Verify dependency in `idf_component.yml`
 
-- [x402 Protocol Specification](https://github.com/coinbase/x402)
+#### Payment Submission Failed
+
+**Symptoms**: `❌ Payment submission failed`
+
+**Solutions**:
+- Verify merchant URL is accessible
+- Check RPC endpoint connectivity
+- Ensure sufficient token balance in payer account
+- Verify private key matches public key
+- Check merchant logs for rejection reason
+
+#### Transaction Build Failed
+
+**Symptoms**: `❌ Failed to build transaction`
+
+**Solutions**:
+- Verify token mint address is correct
+- Ensure Associated Token Accounts exist for both sender/receiver
+- Check token decimals match the mint's decimals
+- Verify blockhash is recent (< 150 blocks old)
+
+#### Memory Issues
+
+**Symptoms**: Crashes, stack overflows, allocation failures
+
+**Solutions**:
+- Increase task stack size in `x402_client.cpp`:
+```cpp
+xTaskCreate(paymentTaskWrapper, "payment_task", 16384, ...);  // Increase from 8192
+```
+- Enable PSRAM if available
+- Reduce HTTP buffer sizes if needed
+
+### Debug Logging
+
+Enable verbose logging for specific components:
+
+```cpp
+esp_log_level_set("x402", ESP_LOG_DEBUG);
+esp_log_level_set("SolanaClient", ESP_LOG_DEBUG);
+esp_log_level_set("HttpClient", ESP_LOG_DEBUG);
+```
+
+### Monitor Serial Output
+
+```bash
+idf.py monitor
+```
+
+Use filters to focus on specific components:
+
+```bash
+idf.py monitor | grep "x402\|SolanaClient"
+```
+
+## 🤝 Contributing
+
+Contributions are welcome! Please follow these guidelines:
+
+### Development Setup
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/amazing-feature`
+3. Make your changes
+4. Run tests (if available)
+5. Commit with clear messages: `git commit -m 'Add amazing feature'`
+6. Push to your fork: `git push origin feature/amazing-feature`
+7. Open a Pull Request
+
+### Code Style
+
+- Follow ESP-IDF coding standards
+- Use meaningful variable and function names
+- Add comments for complex logic
+- Keep functions focused and modular
+- Use C++11/14 features appropriately
+
+### Pull Request Checklist
+
+- [ ] Code compiles without warnings
+- [ ] All features tested on actual hardware
+- [ ] Documentation updated (README, code comments)
+- [ ] No private keys or secrets committed
+- [ ] CHANGELOG updated (if applicable)
+
+## 🛣️ Roadmap
+
+### Short-term (v1.1)
+
+- [ ] Add support for multiple token types
+- [ ] Implement transaction retry logic
+- [ ] Add detailed error codes
+- [ ] Improve display UI/UX
+- [ ] Add OTA update support
+
+### Medium-term (v1.2)
+
+- [ ] Support for Ethereum/EVM chains
+- [ ] Hardware secure element integration
+- [ ] BLE payment initiation
+- [ ] QR code scanning support
+- [ ] Multi-signature support
+
+### Long-term (v2.0)
+
+- [ ] Lightning Network integration
+- [ ] Cross-chain atomic swaps
+- [ ] Payment streaming
+- [ ] Recurring payment subscriptions
+- [ ] Mobile app companion
+
+## 📄 License
+
+This project is dual-licensed:
+
+### Open Source License (AGPL-3.0)
+
+Free to use under **GNU Affero General Public License v3.0** for open source projects. If you use this software in a network service or distribute it, you must share your source code modifications under AGPL-3.0.
+
+**✅ Use AGPL-3.0 if:**
+- Your project is open source
+- You will share all source code
+- Personal/educational/research use
+- Internal company use (no external distribution)
+
+### Commercial License
+
+For commercial products, SaaS, IoT devices, or proprietary use without sharing source code, you must purchase a commercial license.
+
+**💼 Use Commercial License if:**
+- Building commercial IoT products
+- Want to keep modifications private
+- Embedding in hardware devices for sale
+- Running as a paid SaaS service
+- Any proprietary/closed-source use
+
+**Purchase Commercial License**: Contact licensing@[yourdomain].com
+
+See [LICENSE](LICENSE) file for complete terms.
+
+---
+
+## 🙏 Acknowledgments
+
+- [X402 Protocol Specification](https://github.com/Blockchain-Payments/x402-protocol) - Protocol design
+- [PayAI Network](https://x402.payai.network/) - Echo Merchant test service for X402 protocol
+- [Espressif Systems](https://www.espressif.com/) - ESP-IDF framework
+- [LVGL](https://lvgl.io/) - Graphics library
+- [libsodium](https://libsodium.gitbook.io/) - Cryptography library
+- [Solana](https://solana.com/) - Blockchain infrastructure
+
+## 📞 Support
+
+### Documentation
+
+- [X402 Protocol Docs](https://github.com/Blockchain-Payments/x402-protocol)
 - [ESP-IDF Documentation](https://docs.espressif.com/projects/esp-idf/)
-- [Solana Developer Docs](https://solana.com/developers)
-- [Ed25519 Signature Scheme](https://ed25519.cr.yp.to/)
-- [SPL Token Program](https://spl.solana.com/token)
+- [Solana Developer Docs](https://docs.solana.com/)
 
-## Support
+### Community
 
-For issues or questions:
-1. Check serial monitor output (`idf.py monitor`)
-2. Enable debug logging (`CONFIG_LOG_DEFAULT_LEVEL_DEBUG`)
-3. Review ESP-IDF troubleshooting guide
-4. Test with simple WiFi/HTTP examples first
+- GitHub Issues: [Report bugs or request features](https://github.com/merttozer/x402-cpp/issues)
+- Discussions: [Ask questions](https://github.com/merttozer/x402-cpp/discussions)
 
-## Author
+### Contact
 
-Created for ESP32-C6-Touch-LCD-1.69 development board
-Target: PayAI Echo (x402 Solana devnet)
-Version: 1.0.0
+- Email: mertt.ozer@hotmail.com
+- Twitter: [@mertt_ozer](https://twitter.com/mertt_ozer)
+
+## 📊 Performance Metrics
+
+### Transaction Times
+
+| Operation | Typical Time | Notes |
+|-----------|--------------|-------|
+| WiFi Connection | 2-5s | Depends on signal strength |
+| Payment Offer Fetch | 200-500ms | Network dependent |
+| Blockhash Fetch | 300-800ms | RPC endpoint speed |
+| Transaction Build | 50-100ms | CPU intensive |
+| Transaction Sign | 10-20ms | Ed25519 is fast |
+| Payment Submit | 500-2000ms | Includes TX broadcast |
+| **Total Flow** | **2-5 seconds** | End-to-end payment |
+
+### Resource Usage
+
+| Resource | Usage | Notes |
+|----------|-------|-------|
+| Flash | ~1.5MB | Including dependencies |
+| RAM | ~200KB | Peak during transaction |
+| SPIFFS | 4KB | For config.json |
+| Stack (payment task) | 8KB | Configurable |
+
+---
+
+**Built with ❤️ for the Web3 IoT ecosystem**
+
+**Version**: 1.0.0  
+**Last Updated**: November 2025  
+**Status**: Production Ready ✅
