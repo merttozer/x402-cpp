@@ -2,8 +2,6 @@
 
 A comprehensive C/C++ library implementation of the [X402 Payment Protocol](https://github.com/coinbase/x402) for IoT/Embedded Devices, specifically optimized for the ESP32-C6. This library enables resource-constrained embedded devices to participate in blockchain-based payment flows using the X402 standard.
 
-**📺 [Watch Demo Video](https://youtube.com/shorts/yQqeUG1CKlk)** - See it in action!
-
 [![License](https://img.shields.io/badge/License-AGPL--3.0%20%2F%20Commercial-blue.svg)](LICENSE)
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v5.0%2B-blue)](https://docs.espressif.com/projects/esp-idf/en/latest/)
 [![Platform](https://img.shields.io/badge/platform-ESP32--C6-green)](https://www.espressif.com/en/products/socs/esp32-c6)
