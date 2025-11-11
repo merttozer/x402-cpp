@@ -756,7 +756,7 @@ For commercial products, SaaS, IoT devices, or proprietary use without sharing s
 - Running as a paid SaaS service
 - Any proprietary/closed-source use
 
-**Purchase Commercial License**: Contact licensing@[yourdomain].com
+**Purchase Commercial License**: Contact mertt.ozer@hotmail.com
 
 See [LICENSE](LICENSE) file for complete terms.
 
