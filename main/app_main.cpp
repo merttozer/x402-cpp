@@ -21,18 +21,18 @@ extern "C" void app_main(void) {
         return;
     }
 
-    // Create and run the payment client
+    // Create payment client
     X402PaymentClient client(config);
-    bool success = client.run();
-
-    if (success) {
-        ESP_LOGI(TAG, "✅ Payment flow completed successfully");
-    } else {
-        ESP_LOGE(TAG, "❌ Payment flow failed");
+    
+    ESP_LOGI(TAG, "🔧 Initializing environment (display, WiFi, crypto, NVS)...");
+    // Initialize display and components
+    if (!client.init()) {
+        ESP_LOGE(TAG, "❌ Client initialization failed");
+        return;
     }
 
-    // Keep running
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
+    ESP_LOGI(TAG, "✅ Environment ready - entering event loop");
+    
+    // Run event loop (blocking - shows idle screen and handles button presses)
+    client.runEventLoop();
 }

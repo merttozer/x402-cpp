@@ -25,12 +25,34 @@ class X402PaymentClient {
 public:
     explicit X402PaymentClient(const X402Config& config);
 
-    bool init();  // Initialize libsodium, NVS, WiFi
-    bool run();   // Executes the full x402 payment flow
+    /**
+     * @brief Initialize display and environment (crypto, NVS, WiFi)
+     * @return true if initialization successful
+     */
+    bool init();
+    
+    /**
+     * @brief Start the event loop (blocking)
+     * Handles idle state and payment processing
+     */
+    void runEventLoop();
+    
+    /**
+     * @brief Execute the complete payment flow
+     * @return true if payment successful
+     */
+    bool executePaymentFlow();
+    
+    /**
+     * @brief Return to idle screen after a delay
+     * @param delay_ms Delay in milliseconds
+     */
+    void returnToIdleAfterDelay(uint32_t delay_ms);
 
 private:
     bool fetchPaymentOffer(cJSON** offer_json);
-    bool processPayment(cJSON* offer_json);
+    
+    void onPaymentButtonPressed();  // Callback for button press
 
     static char* buildPaymentPayload(const char* base64_tx);
 
@@ -39,4 +61,6 @@ private:
     std::unique_ptr<WiFiManager> wifi_;
     std::unique_ptr<HttpClient> http_;
     std::unique_ptr<DisplayManager> display_;
+    
+    bool env_initialized_;
 };

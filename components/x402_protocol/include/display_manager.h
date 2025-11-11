@@ -1,15 +1,17 @@
 #pragma once
 
 #include <string>
+#include <functional>
 #include "lvgl.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
+#include "esp_lcd_touch.h"
 
 /**
  * @brief Display Manager for ESP32-C6 Touch LCD 1.69"
  * 
- * Manages LVGL initialization, display lifecycle, and provides
- * simple text display methods for status updates.
+ * Manages LVGL initialization, display lifecycle, touch input,
+ * and provides simple text display methods for status updates.
  */
 class DisplayManager {
 public:
@@ -30,6 +32,12 @@ public:
      * @brief Deinitialize and cleanup display resources
      */
     void deinit();
+
+    /**
+     * @brief Show idle screen with "Start Payment" button
+     * @param callback Function to call when button is clicked
+     */
+    void showIdleScreen(std::function<void()> callback);
 
     /**
      * @brief Show text on display with black background and white text
@@ -58,9 +66,14 @@ public:
     void showError(const char* message);
 
     /**
-     * @brief Clear display to black
+     * @brief Clear display to black (hides all UI elements)
      */
     void clear();
+
+    /**
+     * @brief Hide all UI elements (for clean state transitions)
+     */
+    void hideAll();
 
     /**
      * @brief Set display brightness (0-100%)
@@ -76,17 +89,29 @@ public:
 private:
     void initLVGL();
     void initDisplay();
+    void initTouch();
     void initBacklight();
     void lockLVGL();
     void unlockLVGL();
+    
+    static void touchReadCallback(lv_indev_t* indev, lv_indev_data_t* data);
+    static void buttonEventCallback(lv_event_t* e);
 
     // Hardware handles
     esp_lcd_panel_io_handle_t io_handle_;
     esp_lcd_panel_handle_t panel_handle_;
+    esp_lcd_touch_handle_t touch_handle_;
     lv_disp_t* lvgl_disp_;
+    lv_indev_t* lvgl_touch_;
     
     // UI elements
     lv_obj_t* label_;
+    lv_obj_t* idle_container_;
+    lv_obj_t* button_;
+    lv_obj_t* button_label_;
+    
+    // Callback for button press
+    std::function<void()> button_callback_;
     
     // State
     bool initialized_;

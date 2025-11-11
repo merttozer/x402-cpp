@@ -6,6 +6,8 @@
 #include <nvs_flash.h>
 #include <cstdlib>
 #include <cstring>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char* TAG = "x402";
 
@@ -31,6 +33,7 @@ char* X402PaymentClient::buildPaymentPayload(const char* base64_tx) {
 
 X402PaymentClient::X402PaymentClient(const X402Config& config)
     : cfg_(config)
+    , env_initialized_(false)
 {
     solana_ = std::make_unique<SolanaClient>(cfg_.solana_rpc_url);
     wifi_   = std::make_unique<WiFiManager>(cfg_.wifi_ssid, cfg_.wifi_password);
@@ -39,93 +42,127 @@ X402PaymentClient::X402PaymentClient(const X402Config& config)
 }
 
 bool X402PaymentClient::init() {
+    if (env_initialized_) {
+        ESP_LOGI(TAG, "Environment already initialized");
+        return true;
+    }
+
     ESP_LOGI(TAG, "🔧 [INIT] Initializing environment...");
 
     // Initialize display
+    ESP_LOGI(TAG, "Initializing display");
+
     if (!display_->init()) {
         ESP_LOGE(TAG, "❌ Display initialization failed");
         return false;
     }
 
-    // Initialize display first
-    display_->showStatus("X402 Client", "Initializing...");
-    vTaskDelay(pdMS_TO_TICKS(1000));
-
     // libsodium
     ESP_LOGI(TAG, "🧂 Initializing libsodium cryptography...");
     
     if (sodium_init() < 0) {
-        ESP_LOGE(TAG, "❌ libsodium initialization failed — cryptographic functions unavailable!");
-        display_->showError("Crypto Init\nFailed!");
+        ESP_LOGE(TAG, "❌ libsodium initialization failed");
+        vTaskDelay(pdMS_TO_TICKS(2000));
         return false;
     }
     ESP_LOGI(TAG, "✅ libsodium initialized successfully.");
+    vTaskDelay(pdMS_TO_TICKS(500));
 
     // NVS
-    ESP_LOGI(TAG, "💾 Initializing NVS (non-volatile storage)...");
+    ESP_LOGI(TAG, "💾 Initializing NVS...");
     
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_LOGW(TAG, "⚠️ NVS partition issue detected — erasing and reinitializing...");
+        ESP_LOGW(TAG, "⚠️ NVS partition issue detected — erasing...");
         nvs_flash_erase();
         nvs_flash_init();
     }
     ESP_LOGI(TAG, "✅ NVS initialized successfully.");
+    vTaskDelay(pdMS_TO_TICKS(500));
 
     // WiFi
-    ESP_LOGI(TAG, "📶 Connecting to WiFi network '%s'...", cfg_.wifi_ssid);
-    display_->showStatus("WiFi", "Connecting...");
+    ESP_LOGI(TAG, "📶 Connecting to WiFi '%s'...", cfg_.wifi_ssid);
+    
+    // Try to connect with timeout
+    int retry_count = 0;
+    const int max_retries = 10;  // 10 seconds timeout
     
     if (!wifi_->connect()) {
-        ESP_LOGE(TAG, "❌ WiFi connection failed — please check SSID/password and signal strength.");
-        display_->showError("WiFi\nConnection\nFailed!");
+        ESP_LOGE(TAG, "❌ WiFi connect start failed");
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        return false;
+    }
+    
+    // Wait for connection with timeout
+    while (retry_count < max_retries) {
+        if (wifi_->isConnected()) {
+            ESP_LOGI(TAG, "✅ WiFi connected!");
+            break;
+        }
+        
+        ESP_LOGI(TAG, "Waiting for WiFi... (%d/%d)", retry_count + 1, max_retries);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        retry_count++;
+    }
+    
+    if (retry_count >= max_retries) {
+        ESP_LOGE(TAG, "❌ WiFi connection timeout");
+        vTaskDelay(pdMS_TO_TICKS(2000));
         return false;
     }
 
-    ESP_LOGI(TAG, "✅ Environment initialized and connected to network.");
-    display_->showStatus("WiFi", "Connected!");
+    ESP_LOGI(TAG, "✅ Environment initialized.");
     vTaskDelay(pdMS_TO_TICKS(1000));
     
+    env_initialized_ = true;
     return true;
 }
 
 bool X402PaymentClient::fetchPaymentOffer(cJSON** offer_json) {
-    ESP_LOGI(TAG, "🌍 [STEP 1] Requesting payment offer from %s", cfg_.payai_url);
+    ESP_LOGI(TAG, "🌍 [STEP 1] Requesting payment offer...");
     display_->showStatus("Payment", "Fetching offer...");
     
     if (!http_->get_402(cfg_.payai_url, offer_json)) {
-        ESP_LOGE(TAG, "❌ Failed to fetch 402 payment offer — network or server error.");
+        ESP_LOGE(TAG, "❌ Failed to fetch payment offer");
         display_->showError("Offer Fetch\nFailed!");
+        vTaskDelay(pdMS_TO_TICKS(2000));
         return false;
     }
     
-    ESP_LOGI(TAG, "✅ Payment offer successfully received and parsed.");
+    ESP_LOGI(TAG, "✅ Payment offer received");
     display_->showStatus("Payment", "Offer received");
     vTaskDelay(pdMS_TO_TICKS(500));
     
     return true;
 }
 
-bool X402PaymentClient::run() {
+bool X402PaymentClient::executePaymentFlow() {
     ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "🚀 Starting x402 Payment Client (Solana Devnet)");
+    ESP_LOGI(TAG, "🚀 Starting payment flow...");
 
-    if (!init()) {
-        ESP_LOGE(TAG, "❌ Initialization phase failed — aborting payment process.");
-        return false;
+    // Environment should already be initialized from main
+    // Just verify WiFi is connected
+    if (!env_initialized_) {
+        ESP_LOGW(TAG, "Environment not initialized, initializing now...");
+        if (!init()) {
+            return false;
+        }
     }
 
     cJSON* offer_json = nullptr;
-    if (!fetchPaymentOffer(&offer_json)) return false;
+    if (!fetchPaymentOffer(&offer_json)) {
+        return false;
+    }
 
-    ESP_LOGI(TAG, "🔍 Parsing 402 offer details...");
+    ESP_LOGI(TAG, "🔍 Parsing offer details...");
     display_->showStatus("Payment", "Parsing offer...");
     
     cJSON* accepts = cJSON_GetObjectItem(offer_json, "accepts");
     if (!accepts || !cJSON_IsArray(accepts) || cJSON_GetArraySize(accepts) == 0) {
-        ESP_LOGE(TAG, "❌ Invalid 402 response: missing or empty 'accepts' field.");
+        ESP_LOGE(TAG, "❌ Invalid offer");
         display_->showError("Invalid\nOffer!");
         cJSON_Delete(offer_json);
+        vTaskDelay(pdMS_TO_TICKS(2000));
         return false;
     }
 
@@ -138,17 +175,15 @@ bool X402PaymentClient::run() {
         cJSON_GetObjectItem(cJSON_GetObjectItem(offer, "extra"), "feePayer"));
 
     if (!payTo || !asset || !amount_str || !resource || !feePayer) {
-        ESP_LOGE(TAG, "❌ Offer missing required fields (payTo, asset, amount, resource, feePayer).");
+        ESP_LOGE(TAG, "❌ Incomplete offer data");
         display_->showError("Invalid\nOffer Data!");
         cJSON_Delete(offer_json);
+        vTaskDelay(pdMS_TO_TICKS(2000));
         return false;
     }
 
     uint64_t amount = strtoull(amount_str, nullptr, 10);
-    ESP_LOGI(TAG, "💰 [STEP 2] Transaction details — Amount: %.6f %s", (double)amount / 1e6, asset);
-    ESP_LOGI(TAG, "   → Pay to: %s", payTo);
-    ESP_LOGI(TAG, "   → Fee payer: %s", feePayer);
-    ESP_LOGI(TAG, "   → Resource: %s", resource);
+    ESP_LOGI(TAG, "💰 Amount: %.6f %s", (double)amount / 1e6, asset);
 
     char amount_display[64];
     snprintf(amount_display, sizeof(amount_display), "Amount:\n%.6f", (double)amount / 1e6);
@@ -156,40 +191,42 @@ bool X402PaymentClient::run() {
     vTaskDelay(pdMS_TO_TICKS(1500));
 
     uint8_t blockhash[32];
-    ESP_LOGI(TAG, "🔗 [STEP 3] Fetching recent Solana blockhash...");
+    ESP_LOGI(TAG, "🔗 [STEP 3] Fetching blockhash...");
     display_->showStatus("Solana", "Fetching blockhash...");
     
     if (!solana_->fetchRecentBlockhash(blockhash)) {
-        ESP_LOGE(TAG, "❌ Failed to fetch recent blockhash — Solana RPC may be unreachable.");
-        display_->showError("Blockhash\nFetch Failed!");
+        ESP_LOGE(TAG, "❌ Failed to fetch blockhash");
+        display_->showError("Blockhash\nFailed!");
         cJSON_Delete(offer_json);
+        vTaskDelay(pdMS_TO_TICKS(2000));
         return false;
     }
     
-    ESP_LOGI(TAG, "✅ Recent blockhash successfully obtained.");
+    ESP_LOGI(TAG, "✅ Blockhash obtained");
     display_->showStatus("Solana", "Blockhash OK");
     vTaskDelay(pdMS_TO_TICKS(500));
 
     std::vector<uint8_t> tx_message;
-    ESP_LOGI(TAG, "🔨 [STEP 4] Building Solana transaction...");
+    ESP_LOGI(TAG, "🔨 [STEP 4] Building transaction...");
     display_->showStatus("Transaction", "Building...");
     
     if (!solana_->buildTransaction(
             cfg_.payer_public_key, payTo, feePayer,
             cfg_.token_mint, amount, cfg_.token_decimals,
             blockhash, tx_message)) {
-        ESP_LOGE(TAG, "❌ Failed to construct transaction — token account or encoding error.");
+        ESP_LOGE(TAG, "❌ Failed to build transaction");
         display_->showError("TX Build\nFailed!");
         cJSON_Delete(offer_json);
+        vTaskDelay(pdMS_TO_TICKS(2000));
         return false;
     }
     
-    ESP_LOGI(TAG, "✅ Transaction built successfully (%zu bytes).", tx_message.size());
-    display_->showStatus("Transaction", "Built successfully");
+    ESP_LOGI(TAG, "✅ Transaction built (%zu bytes)", tx_message.size());
+    display_->showStatus("Transaction", "Built!");
     vTaskDelay(pdMS_TO_TICKS(500));
 
     uint8_t signature[64];
-    ESP_LOGI(TAG, "🔐 [STEP 5] Signing transaction using local private key...");
+    ESP_LOGI(TAG, "🔐 [STEP 5] Signing...");
     display_->showStatus("Signing", "Signing TX...");
     
     if (!CryptoUtils::ed25519Sign(signature,
@@ -197,32 +234,34 @@ bool X402PaymentClient::run() {
                                   tx_message.size(),
                                   cfg_.payer_private_key,
                                   cfg_.payer_public_key)) {
-        ESP_LOGE(TAG, "❌ Transaction signing failed — check private key integrity.");
+        ESP_LOGE(TAG, "❌ Signing failed");
         display_->showError("Signing\nFailed!");
         cJSON_Delete(offer_json);
+        vTaskDelay(pdMS_TO_TICKS(2000));
         return false;
     }
     
-    ESP_LOGI(TAG, "✅ Transaction successfully signed with ed25519.");
-    display_->showStatus("Signing", "TX Signed");
+    ESP_LOGI(TAG, "✅ Transaction signed");
+    display_->showStatus("Signing", "Signed!");
     vTaskDelay(pdMS_TO_TICKS(500));
 
     std::string base64_tx;
-    ESP_LOGI(TAG, "📦 [STEP 6] Encoding signed transaction to Base64...");
-    display_->showStatus("Encoding", "Encoding TX...");
+    ESP_LOGI(TAG, "📦 [STEP 6] Encoding...");
+    display_->showStatus("Encoding", "Encoding...");
     
     if (!solana_->buildSignedTransaction(tx_message, signature, base64_tx)) {
-        ESP_LOGE(TAG, "❌ Could not encode signed transaction — memory or encoding failure.");
+        ESP_LOGE(TAG, "❌ Encoding failed");
         display_->showError("Encoding\nFailed!");
         cJSON_Delete(offer_json);
+        vTaskDelay(pdMS_TO_TICKS(2000));
         return false;
     }
     
-    ESP_LOGI(TAG, "✅ Transaction encoded successfully (Base64 length: %zu).", base64_tx.size());
-    display_->showStatus("Encoding", "TX Encoded");
+    ESP_LOGI(TAG, "✅ Transaction encoded");
+    display_->showStatus("Encoding", "Encoded!");
     vTaskDelay(pdMS_TO_TICKS(500));
 
-    ESP_LOGI(TAG, "💸 [STEP 7] Submitting payment to PayAI endpoint...");
+    ESP_LOGI(TAG, "💸 [STEP 7] Submitting payment...");
     display_->showStatus("Payment", "Submitting...");
     
     char* x_payment_header = buildPaymentPayload(base64_tx.c_str());
@@ -233,53 +272,101 @@ bool X402PaymentClient::run() {
     cJSON_Delete(offer_json);
 
     if (!ok) {
-        ESP_LOGE(TAG, "❌ Payment submission failed — check network and server response.");
-        display_->showError("Payment\nSubmission\nFailed!");
+        ESP_LOGE(TAG, "❌ Payment submission failed");
+        display_->showError("Payment\nFailed!");
+        vTaskDelay(pdMS_TO_TICKS(3000));
         return false;
     }
 
-    ESP_LOGI(TAG, "✅ [SUCCESS] Payment successfully completed and confirmed by server!");
+    ESP_LOGI(TAG, "✅ [SUCCESS] Payment completed!");
     
     if (content) {
-        ESP_LOGI(TAG, "📦 Raw Server Response:\n%s", content);
+        ESP_LOGI(TAG, "📦 Response:\n%s", content);
 
-        // Parse premium content field if available
         cJSON* response_json = cJSON_Parse(content);
         if (response_json) {
-            cJSON* premium_item = cJSON_GetObjectItem(response_json, "premiumContent");
-            cJSON* tx_hash_item = cJSON_GetObjectItem(response_json, "signature");
-            if (premium_item && cJSON_IsString(premium_item) && tx_hash_item && cJSON_IsString(tx_hash_item)) {
-                ESP_LOGI(TAG, "💎 Premium Content Unlocked:");
-                ESP_LOGI(TAG, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-                ESP_LOGI(TAG, "✨ %s", premium_item->valuestring);
-                ESP_LOGI(TAG, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-                
-                char display_content[256] = {0};
-                const char* premium_str = premium_item->valuestring;
-                const char* tx_hash_str = tx_hash_item->valuestring;
-
-                // Show premium content on display
-                snprintf(display_content, sizeof(display_content) - 1, 
-                        "%s\nTX Hash:\n%s",
-                        premium_str, 
-                        tx_hash_str);
-                display_->showSuccess(display_content);
+            cJSON* premium = cJSON_GetObjectItem(response_json, "premiumContent");
+            if (premium && cJSON_IsString(premium)) {
+                ESP_LOGI(TAG, "💎 Premium: %s", premium->valuestring);
+                display_->showSuccess(premium->valuestring);
             } else {
-                ESP_LOGW(TAG, "⚠️ No 'premiumContent' field in response.");
                 display_->showSuccess("Payment\nSuccessful!");
             }
             cJSON_Delete(response_json);
         } else {
-            ESP_LOGW(TAG, "⚠️ Could not parse JSON response.");
             display_->showSuccess("Payment\nSuccessful!");
         }
 
         free(content);
     } else {
-        ESP_LOGW(TAG, "⚠️ No content returned from server.");
         display_->showSuccess("Payment\nSuccessful!");
     }
 
-    ESP_LOGI(TAG, "🏁 x402 Payment Client run finished — returning success.");
+    ESP_LOGI(TAG, "🏁 Payment flow finished");
     return true;
+}
+
+// Static task wrapper
+static void paymentTaskWrapper(void* arg) {
+    X402PaymentClient* client = static_cast<X402PaymentClient*>(arg);
+    
+    ESP_LOGI(TAG, "💡 Payment task started");
+    
+    bool success = client->executePaymentFlow();
+    
+    // Return to idle after showing result
+    if (success) {
+        client->returnToIdleAfterDelay(5000);  // 5 seconds
+    } else {
+        client->returnToIdleAfterDelay(3000);  // 3 seconds
+    }
+    
+    ESP_LOGI(TAG, "💡 Payment task finished");
+    
+    // Delete task
+    vTaskDelete(NULL);
+}
+
+void X402PaymentClient::onPaymentButtonPressed() {
+    ESP_LOGI(TAG, "💡 Payment button pressed - creating payment task");
+    
+    // Create task with large stack for network operations
+    BaseType_t ret = xTaskCreate(
+        paymentTaskWrapper,
+        "payment_task",
+        8192,  // 8KB stack
+        this,
+        5,     // Priority
+        NULL
+    );
+    
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "❌ Failed to create payment task");
+        display_->showError("Task\nCreation\nFailed!");
+        returnToIdleAfterDelay(3000);
+    }
+}
+
+void X402PaymentClient::returnToIdleAfterDelay(uint32_t delay_ms) {
+    ESP_LOGI(TAG, "Returning to idle in %lu ms", delay_ms);
+    vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    
+    // Show idle screen again
+    display_->showIdleScreen([this]() {
+        this->onPaymentButtonPressed();
+    });
+}
+
+void X402PaymentClient::runEventLoop() {
+    ESP_LOGI(TAG, "🔄 Starting event loop");
+    
+    // Show initial idle screen
+    display_->showIdleScreen([this]() {
+        this->onPaymentButtonPressed();
+    });
+    
+    // Keep running forever
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
 }
