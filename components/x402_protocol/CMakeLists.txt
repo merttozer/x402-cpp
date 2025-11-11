@@ -7,6 +7,7 @@ idf_component_register(
         "src/wifi_manager.cpp"
         "src/x402_client.cpp"
         "src/config_manager.cpp"
+        "src/display_manager.cpp"
     INCLUDE_DIRS "include"
     REQUIRES
         esp_wifi
@@ -18,6 +19,9 @@ idf_component_register(
         libsodium
         json
         log
+        lvgl
+        esp_lvgl_port
+        espressif__esp_lcd_touch_cst816s
     PRIV_REQUIRES
         spiffs
 )

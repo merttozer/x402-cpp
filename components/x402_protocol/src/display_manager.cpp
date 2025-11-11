@@ -1,0 +1,322 @@
+#include "display_manager.h"
+#include "esp_log.h"
+#include "driver/spi_master.h"
+#include "driver/gpio.h"
+#include "esp_lcd_panel_ops.h"
+#include "esp_lvgl_port.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+static const char* TAG = "DisplayManager";
+
+// Hardware pin definitions for ESP32-C6 Touch LCD 1.69"
+#define LCD_HOST            SPI2_HOST
+#define LCD_PIXEL_CLOCK_HZ  (40 * 1000 * 1000)
+#define LCD_H_RES           240
+#define LCD_V_RES           280
+
+#define PIN_NUM_MOSI        2
+#define PIN_NUM_CLK         1
+#define PIN_NUM_CS          5
+#define PIN_NUM_DC          3
+#define PIN_NUM_RST         4
+#define PIN_NUM_BL          6
+
+DisplayManager::DisplayManager()
+    : io_handle_(nullptr)
+    , panel_handle_(nullptr)
+    , lvgl_disp_(nullptr)
+    , label_(nullptr)
+    , initialized_(false)
+    , brightness_(100)
+{
+}
+
+DisplayManager::~DisplayManager() {
+    deinit();
+}
+
+bool DisplayManager::init() {
+    if (initialized_) {
+        ESP_LOGW(TAG, "Display already initialized");
+        return true;
+    }
+
+    ESP_LOGI(TAG, "Initializing display...");
+
+    // Initialize LVGL library
+    initLVGL();
+    
+    // Initialize display hardware
+    initDisplay();
+    
+    // Initialize backlight
+    initBacklight();
+
+    // Create main label for text display
+    lockLVGL();
+    
+    // Set black background
+    lv_obj_set_style_bg_color(lv_scr_act(), lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(lv_scr_act(), LV_OPA_COVER, LV_PART_MAIN);
+    
+    // Create label for text
+    label_ = lv_label_create(lv_scr_act());
+    lv_obj_set_width(label_, LCD_H_RES - 20);  // Leave 10px margin on each side
+    lv_obj_set_style_text_color(label_, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_text_align(label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(label_, LV_LABEL_LONG_WRAP);
+    lv_obj_align(label_, LV_ALIGN_CENTER, 0, 0);
+    
+    unlockLVGL();
+
+    initialized_ = true;
+    ESP_LOGI(TAG, "Display initialized successfully");
+    
+    return true;
+}
+
+void DisplayManager::deinit() {
+    if (!initialized_) {
+        return;
+    }
+
+    ESP_LOGI(TAG, "Deinitializing display...");
+
+    lockLVGL();
+    if (label_) {
+        lv_obj_del(label_);
+        label_ = nullptr;
+    }
+    unlockLVGL();
+
+    if (lvgl_disp_) {
+        lvgl_port_remove_disp(lvgl_disp_);
+        lvgl_disp_ = nullptr;
+    }
+
+    if (panel_handle_) {
+        esp_lcd_panel_del(panel_handle_);
+        panel_handle_ = nullptr;
+    }
+
+    if (io_handle_) {
+        esp_lcd_panel_io_del(io_handle_);
+        io_handle_ = nullptr;
+    }
+
+    spi_bus_free(LCD_HOST);
+    lvgl_port_deinit();
+
+    initialized_ = false;
+    ESP_LOGI(TAG, "Display deinitialized");
+}
+
+void DisplayManager::initLVGL() {
+    ESP_LOGI(TAG, "Initializing LVGL...");
+    
+    lv_init();
+    
+    const lvgl_port_cfg_t lvgl_cfg = ESP_LVGL_PORT_INIT_CONFIG();
+    esp_err_t ret = lvgl_port_init(&lvgl_cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "LVGL port initialization failed: %s", esp_err_to_name(ret));
+    }
+}
+
+void DisplayManager::initDisplay() {
+    ESP_LOGI(TAG, "Initializing SPI bus...");
+    
+    spi_bus_config_t buscfg = {};
+    buscfg.mosi_io_num = PIN_NUM_MOSI;
+    buscfg.miso_io_num = -1;
+    buscfg.sclk_io_num = PIN_NUM_CLK;
+    buscfg.quadwp_io_num = -1;
+    buscfg.quadhd_io_num = -1;
+    buscfg.max_transfer_sz = LCD_H_RES * 80 * sizeof(uint16_t);
+    
+    ESP_ERROR_CHECK(spi_bus_initialize(LCD_HOST, &buscfg, SPI_DMA_CH_AUTO));
+
+    ESP_LOGI(TAG, "Installing panel IO...");
+    
+    esp_lcd_panel_io_spi_config_t io_config = {};
+    io_config.cs_gpio_num = PIN_NUM_CS;
+    io_config.dc_gpio_num = PIN_NUM_DC;
+    io_config.spi_mode = 0;
+    io_config.pclk_hz = LCD_PIXEL_CLOCK_HZ;
+    io_config.trans_queue_depth = 10;
+    io_config.lcd_cmd_bits = 8;
+    io_config.lcd_param_bits = 8;
+    
+    ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi(
+        (esp_lcd_spi_bus_handle_t)LCD_HOST, &io_config, &io_handle_));
+
+    ESP_LOGI(TAG, "Installing ST7789 panel driver...");
+    
+    esp_lcd_panel_dev_config_t panel_config = {};
+    panel_config.reset_gpio_num = PIN_NUM_RST;
+    panel_config.rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB;
+    panel_config.bits_per_pixel = 16;
+    
+    ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(io_handle_, &panel_config, &panel_handle_));
+    ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle_));
+    ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle_));
+    ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel_handle_, true));
+    ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle_, false, false));
+    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle_, true));
+
+    ESP_LOGI(TAG, "Initializing LVGL display driver...");
+    
+    lvgl_port_display_cfg_t disp_cfg = {};
+    disp_cfg.io_handle = io_handle_;
+    disp_cfg.panel_handle = panel_handle_;
+    disp_cfg.buffer_size = LCD_H_RES * 40;
+    disp_cfg.double_buffer = true;
+    disp_cfg.hres = LCD_H_RES;
+    disp_cfg.vres = LCD_V_RES;
+    disp_cfg.monochrome = false;
+    disp_cfg.color_format = LV_COLOR_FORMAT_RGB565;
+    disp_cfg.rotation.swap_xy = false;
+    disp_cfg.rotation.mirror_x = false;
+    disp_cfg.rotation.mirror_y = false;
+    disp_cfg.flags.buff_dma = true;
+    disp_cfg.flags.buff_spiram = false;
+    disp_cfg.flags.sw_rotate = false;
+    disp_cfg.flags.swap_bytes = true;
+
+    lvgl_disp_ = lvgl_port_add_disp(&disp_cfg);
+    lv_disp_set_default(lvgl_disp_);
+    
+    // Set gap after adding display
+    ESP_ERROR_CHECK(esp_lcd_panel_set_gap(panel_handle_, 0, 20));
+    
+    ESP_LOGI(TAG, "Display initialized: %dx%d", LCD_H_RES, LCD_V_RES);
+}
+
+void DisplayManager::initBacklight() {
+    ESP_LOGI(TAG, "Initializing backlight...");
+    
+    gpio_config_t bk_gpio_config = {};
+    bk_gpio_config.pin_bit_mask = 1ULL << PIN_NUM_BL;
+    bk_gpio_config.mode = GPIO_MODE_OUTPUT;
+    bk_gpio_config.pull_up_en = GPIO_PULLUP_DISABLE;
+    bk_gpio_config.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    bk_gpio_config.intr_type = GPIO_INTR_DISABLE;
+    
+    ESP_ERROR_CHECK(gpio_config(&bk_gpio_config));
+    gpio_set_level((gpio_num_t)PIN_NUM_BL, 1);
+    
+    ESP_LOGI(TAG, "Backlight enabled");
+}
+
+void DisplayManager::lockLVGL() {
+    lvgl_port_lock(0);
+}
+
+void DisplayManager::unlockLVGL() {
+    lvgl_port_unlock();
+}
+
+void DisplayManager::showText(const char* text, bool centered) {
+    if (!initialized_ || !label_) {
+        ESP_LOGW(TAG, "Display not initialized");
+        return;
+    }
+
+    lockLVGL();
+    
+    lv_label_set_text(label_, text);
+    
+    if (centered) {
+        lv_obj_set_style_text_align(label_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align(label_, LV_ALIGN_CENTER, 0, 0);
+    } else {
+        lv_obj_set_style_text_align(label_, LV_TEXT_ALIGN_LEFT, 0);
+        lv_obj_align(label_, LV_ALIGN_TOP_LEFT, 10, 10);
+    }
+    
+    unlockLVGL();
+}
+
+void DisplayManager::showStatus(const char* title, const char* message) {
+    if (!initialized_ || !label_) {
+        ESP_LOGW(TAG, "Display not initialized");
+        return;
+    }
+
+    char buffer[256];
+    if (message) {
+        snprintf(buffer, sizeof(buffer), "%s\n\n%s", title, message);
+    } else {
+        snprintf(buffer, sizeof(buffer), "%s", title);
+    }
+
+    showText(buffer, true);
+}
+
+void DisplayManager::showSuccess(const char* message) {
+    if (!initialized_ || !label_) {
+        ESP_LOGW(TAG, "Display not initialized");
+        return;
+    }
+
+    lockLVGL();
+    
+    // Green accent for success
+    lv_obj_set_style_text_color(label_, lv_color_hex(0x00FF00), LV_PART_MAIN);
+    lv_label_set_text(label_, message);
+    lv_obj_set_style_text_align(label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(label_, LV_ALIGN_CENTER, 0, 0);
+    
+    unlockLVGL();
+    
+    // Reset to white after a delay
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    
+    lockLVGL();
+    lv_obj_set_style_text_color(label_, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    unlockLVGL();
+}
+
+void DisplayManager::showError(const char* message) {
+    if (!initialized_ || !label_) {
+        ESP_LOGW(TAG, "Display not initialized");
+        return;
+    }
+
+    lockLVGL();
+    
+    // Red color for error
+    lv_obj_set_style_text_color(label_, lv_color_hex(0xFF0000), LV_PART_MAIN);
+    lv_label_set_text(label_, message);
+    lv_obj_set_style_text_align(label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(label_, LV_ALIGN_CENTER, 0, 0);
+    
+    unlockLVGL();
+}
+
+void DisplayManager::clear() {
+    if (!initialized_ || !label_) {
+        ESP_LOGW(TAG, "Display not initialized");
+        return;
+    }
+
+    lockLVGL();
+    lv_label_set_text(label_, "");
+    unlockLVGL();
+}
+
+void DisplayManager::setBrightness(uint8_t brightness) {
+    if (brightness > 100) {
+        brightness = 100;
+    }
+    
+    brightness_ = brightness;
+    
+    // Simple on/off control (can be enhanced with PWM)
+    if (brightness > 0) {
+        gpio_set_level((gpio_num_t)PIN_NUM_BL, 1);
+    } else {
+        gpio_set_level((gpio_num_t)PIN_NUM_BL, 0);
+    }
+}

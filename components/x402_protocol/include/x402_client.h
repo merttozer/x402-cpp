@@ -7,6 +7,7 @@
 #include "solana_client.h"
 #include "wifi_manager.h"
 #include "http_client.h"
+#include "display_manager.h"
 
 struct X402Config {
     const char* wifi_ssid;
@@ -37,4 +38,5 @@ private:
     std::unique_ptr<SolanaClient> solana_;
     std::unique_ptr<WiFiManager> wifi_;
     std::unique_ptr<HttpClient> http_;
+    std::unique_ptr<DisplayManager> display_;
 };
