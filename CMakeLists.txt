@@ -8,3 +8,5 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
 # Define project
 project(esp32-x402-client)
+
+spiffs_create_partition_image(storage main/spiffs FLASH_IN_PROJECT)
