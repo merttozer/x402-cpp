@@ -40,6 +40,7 @@ DisplayManager::DisplayManager()
     , idle_container_(nullptr)
     , button_(nullptr)
     , button_label_(nullptr)
+    , wallet_address_label_(nullptr)
     , button_callback_(nullptr)
     , initialized_(false)
     , brightness_(100)
@@ -118,6 +119,10 @@ void DisplayManager::deinit() {
     if (idle_container_) {
         lv_obj_del(idle_container_);
         idle_container_ = nullptr;
+    }
+    if (wallet_address_label_) {
+        lv_obj_del(wallet_address_label_);
+        wallet_address_label_ = nullptr;
     }
     unlockLVGL();
 
@@ -383,7 +388,14 @@ void DisplayManager::showIdleScreen(std::function<void()> callback) {
     lv_obj_t* instruction_label = lv_label_create(idle_container_);
     lv_label_set_text(instruction_label, "Tap button to begin");
     lv_obj_set_style_text_color(instruction_label, lv_color_hex(0x666666), LV_PART_MAIN);
-    lv_obj_align(instruction_label, LV_ALIGN_BOTTOM_MID, 0, -30);
+    lv_obj_align(instruction_label, LV_ALIGN_BOTTOM_MID, 0, -50); // moved up slightly
+
+    // Add wallet address (small, subtle)
+    wallet_address_label_ = lv_label_create(idle_container_);
+    lv_label_set_text(wallet_address_label_, "Wallet: 2KUCmt...2yZ1");
+    lv_obj_set_style_text_color(wallet_address_label_, lv_color_hex(0x444444), LV_PART_MAIN);
+    lv_obj_set_style_text_font(wallet_address_label_, &lv_font_montserrat_10, 0); // smaller font if available
+    lv_obj_align(wallet_address_label_, LV_ALIGN_BOTTOM_MID, 0, -10); // near bottom
     
     unlockLVGL();
     
@@ -450,7 +462,7 @@ void DisplayManager::showSuccess(const char* message) {
     
     // Show label with green text
     lv_obj_clear_flag(label_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_text_color(label_, lv_color_hex(0x00FF00), LV_PART_MAIN);
+    lv_obj_set_style_text_color(label_, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_label_set_text(label_, message);
     lv_obj_set_style_text_align(label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(label_, LV_ALIGN_CENTER, 0, 0);

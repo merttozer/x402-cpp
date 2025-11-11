@@ -109,6 +109,7 @@ private:
     lv_obj_t* idle_container_;
     lv_obj_t* button_;
     lv_obj_t* button_label_;
+    lv_obj_t* wallet_address_label_;
     
     // Callback for button press
     std::function<void()> button_callback_;

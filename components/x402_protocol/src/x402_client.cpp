@@ -286,12 +286,39 @@ bool X402PaymentClient::executePaymentFlow() {
         cJSON* response_json = cJSON_Parse(content);
         if (response_json) {
             cJSON* premium = cJSON_GetObjectItem(response_json, "premiumContent");
+            cJSON* txid = cJSON_GetObjectItem(response_json, "transactionId");
+
+            char display_buf[128] = {0}; // Stack-allocated, no malloc
+
+            const char* main_msg = "Payment Successful!";
             if (premium && cJSON_IsString(premium)) {
-                ESP_LOGI(TAG, "💎 Premium: %s", premium->valuestring);
-                display_->showSuccess(premium->valuestring);
-            } else {
-                display_->showSuccess("Payment\nSuccessful!");
+                main_msg = premium->valuestring;
             }
+
+            if (txid && cJSON_IsString(txid)) {
+                const char* full_hash = txid->valuestring;
+                size_t len = strlen(full_hash);
+                if (len >= 10) {
+                    // Format: "MainMsg\n\nTX: ABCDEF...WXYZ"
+                    // Ensure we don't overflow 128 bytes
+                    int written = snprintf(display_buf, sizeof(display_buf),
+                        "%s\n\nTX: %.6s...%.4s",
+                        main_msg,
+                        full_hash,
+                        full_hash + len - 4);
+                    if (written < 0 || written >= (int)sizeof(display_buf)) {
+                        // Fallback if truncation occurs
+                        strncpy(display_buf, main_msg, sizeof(display_buf) - 1);
+                    }
+                } else {
+                    // Hash too short? Just show main msg
+                    strncpy(display_buf, main_msg, sizeof(display_buf) - 1);
+                }
+            } else {
+                strncpy(display_buf, main_msg, sizeof(display_buf) - 1);
+            }
+
+            display_->showSuccess(display_buf);
             cJSON_Delete(response_json);
         } else {
             display_->showSuccess("Payment\nSuccessful!");
