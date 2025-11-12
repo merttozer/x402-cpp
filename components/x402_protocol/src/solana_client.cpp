@@ -78,8 +78,15 @@ bool SolanaClient::findProgramAddress(
         memcpy(input.data() + offset + 1, programId, 32);
         memcpy(input.data() + offset + 33, "ProgramDerivedAddress", 21);
         crypto_hash_sha256(pdaOut, input.data(), inputLen);
-        *bumpOut = bump;
-        return true;
+        
+        // Check if the derived address is off the ed25519 curve
+        // crypto_core_ed25519_is_valid_point returns 1 if ON curve, 0 if OFF curve
+        if (crypto_core_ed25519_is_valid_point(pdaOut) == 0) {
+            // Address is off-curve, this is a valid PDA
+            *bumpOut = bump;
+            return true;
+        }
+        // If on-curve, continue to next bump value
     }
     return false;
 }
@@ -181,6 +188,7 @@ bool SolanaClient::buildTransaction(
         return false;
 
     // Hardcoded ATAs (for devnet testing)
+    // TODO: Need to be replaced with deriveAssociatedTokenAddress.
     uint8_t sourceAta[32], destAta[32];
     CryptoUtils::base58ToBytes("DNT1Vj1a8q8giykng5XGKBmcYhnmQc98Apg5mjpd8dhu", sourceAta);
     CryptoUtils::base58ToBytes("2g7LTDwkHaeU3PcTqkiXzzWNpCt6VxpuPHLH3PX1m11d", destAta);
