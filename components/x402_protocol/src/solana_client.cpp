@@ -187,11 +187,21 @@ bool SolanaClient::buildTransaction(
         !CryptoUtils::base58ToBytes(feePayerBase58, feePayer))
         return false;
 
-    // Hardcoded ATAs (for devnet testing)
-    // TODO: Need to be replaced with deriveAssociatedTokenAddress.
+    // Derive ATAs dynamically
     uint8_t sourceAta[32], destAta[32];
-    CryptoUtils::base58ToBytes("DNT1Vj1a8q8giykng5XGKBmcYhnmQc98Apg5mjpd8dhu", sourceAta);
-    CryptoUtils::base58ToBytes("2g7LTDwkHaeU3PcTqkiXzzWNpCt6VxpuPHLH3PX1m11d", destAta);
+    uint8_t sourceBump, destBump;
+    
+    if (!deriveAssociatedTokenAddress(payerPubkey, mint, sourceAta, &sourceBump)) {
+        ESP_LOGE(TAG, "❌ Failed to derive source ATA");
+        return false;
+    }
+    ESP_LOGI(TAG, "✅ Source ATA derived with bump=%u", sourceBump);
+    
+    if (!deriveAssociatedTokenAddress(payto, mint, destAta, &destBump)) {
+        ESP_LOGE(TAG, "❌ Failed to derive destination ATA");
+        return false;
+    }
+    ESP_LOGI(TAG, "✅ Destination ATA derived with bump=%u", destBump);
 
     uint8_t accounts[7][32];
     int accountCount = 0;
