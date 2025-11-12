@@ -1,4 +1,4 @@
-# x402 C++ Library for IoT/Embedded Devices
+# MicroPay: x402 C++ Library
 
 A comprehensive C/C++ library implementation of the [X402 Payment Protocol](https://github.com/coinbase/x402) for IoT/Embedded Devices, specifically optimized for the ESP32-C6. This library enables resource-constrained embedded devices to participate in blockchain-based payment flows using the X402 standard.
 
